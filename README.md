@@ -1,2 +1,196 @@
-# Taunggyi2025
-AI-powered personalized English education platform inspired by Perplexity AI &amp; Synthesis Tutor
+# 📚 Taunggyi English Tutor
+
+> **AI-powered personalized English education platform** for Grades 1–3, inspired by **Perplexity AI** and **Synthesis Tutor**.
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-red)](https://streamlit.io)
+[![Gemini](https://img.shields.io/badge/LLM-Gemini%201.5%20Flash-orange)](https://ai.google.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+---
+
+## ✨ Features
+
+- 🤖 **AI Tutor** — Google Gemini 1.5 Flash explains phonics, reading, and spelling step-by-step
+- 📄 **RAG-Grounded** — Every lesson is anchored to the actual curriculum PDFs via FAISS vector search
+- 🧑‍🏫 **Preface-Driven Teaching** — Teaching methodology extracted directly from McGuffey textbook prefaces
+- 📊 **Progress Dashboard** — Track accuracy, streak, lessons completed, and topic mastery
+- 🏅 **Badges & Gamification** — Earn badges for milestones, maintain daily streaks
+- 📝 **Interactive Quizzes** — Multiple-choice and fill-in-the-blank with instant feedback
+- 📈 **Adaptive Difficulty** — Automatically adjusts lesson level based on student performance
+- 🔊 **Text-to-Speech** — Read lessons aloud via `edge-tts` (free) or Azure TTS (optional)
+- 🎨 **Visual Aids** — Alphabet charts, phonics sound charts, word family diagrams
+- 💾 **Persistent Profiles** — SQLite database stores progress across sessions
+- 👤 **Simple Login** — Username-only (no password), expandable to full auth later
+
+---
+
+## 🏗️ Architecture
+
+```
+Taunggyi2025/
+├── main.py                    # Streamlit app entry point
+├── config.py                  # API keys, model routing, PDF paths, TTS/RAG config
+├── gui_engine.py              # Streamlit UI: chat, sidebar, quizzes, dashboard, TTS
+├── human_engine.py            # Human-like teaching prompts from PDF prefaces
+├── visual_teacher.py          # Matplotlib educational visuals
+├── learning_orchestrator.py   # Session coordination, RAG + LLM workflow
+├── ai_teacher.py              # Gemini LLM calls + FAISS RAG pipeline
+├── student.py                 # SQLite student profile tracking
+├── mistake_analyzer.py        # Error detection and explanation
+├── adaptive_path.py           # Adaptive difficulty adjustment
+├── requirements.txt           # Python dependencies
+├── .env.example               # Example environment variables
+├── curriculum/                # Place curriculum PDFs here
+│   ├── .gitkeep
+│   └── README.md
+├── data/                      # SQLite DB + FAISS index (auto-created)
+│   └── .gitkeep
+└── README.md
+```
+
+### How It Works
+
+```
+Student Input
+     │
+     ▼
+Learning Orchestrator ──► Intent Detection (lesson/quiz/review/visual)
+     │
+     ├──► RAG Pipeline (ai_teacher.py)
+     │         └── FAISS similarity search → relevant PDF chunks
+     │
+     ├──► Human Engine (human_engine.py)
+     │         └── Build preface-guided teaching prompt
+     │
+     ├──► Gemini 1.5 Flash LLM
+     │         └── Grounded, step-by-step response
+     │
+     ├──► Mistake Analyzer (mistake_analyzer.py)
+     │         └── Detect errors, generate corrections
+     │
+     ├──► Student DB (student.py)
+     │         └── SQLite: update progress, record mistakes
+     │
+     └──► Adaptive Path (adaptive_path.py)
+               └── Adjust difficulty, recommend next topic
+```
+
+---
+
+## 🚀 Quick Start
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Sdip25588/Taunggyi2025.git
+cd Taunggyi2025
+```
+
+### 2. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Configure Environment Variables
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and add your API keys:
+
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+### 4. Add Curriculum PDFs
+
+Place the following files in the `curriculum/` folder:
+- `phonics.pdf` — Phonics curriculum for Grades 1–3
+- `reading.pdf` — McGuffey's First Eclectic Reader
+- `Spelling.pdf` — McGuffey's Eclectic Spelling Book
+
+See `curriculum/README.md` for details.
+
+### 5. Run the App
+
+```bash
+streamlit run main.py
+```
+
+Open your browser to `http://localhost:8501` 🎉
+
+---
+
+## 🔑 Getting API Keys
+
+### Google Gemini (Required)
+
+1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Click **"Create API Key"**
+3. Copy the key into your `.env` file as `GEMINI_API_KEY`
+4. **Free tier available** — no credit card needed
+
+### Azure TTS (Optional — for premium voice quality)
+
+The app uses **`edge-tts`** by default (free, no key needed). Azure TTS is optional:
+
+1. Go to [Azure Portal](https://portal.azure.com)
+2. Create a **Speech Services** resource (Free F0 tier: 500K characters/month)
+3. Copy **Key 1** and **Region** to your `.env`:
+   ```env
+   AZURE_SPEECH_KEY=your_key_here
+   AZURE_SPEECH_REGION=eastus
+   TTS_PROVIDER=azure
+   ```
+
+---
+
+## 📖 Curriculum Subjects
+
+| Subject | Source | Grade |
+|---------|--------|-------|
+| **Phonics** | Phonics curriculum PDF | 1–3 |
+| **Reading** | McGuffey's First Eclectic Reader | 1–2 |
+| **Spelling** | McGuffey's Eclectic Spelling Book | 1–3 |
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| LLM | Google Gemini 1.5 Flash |
+| Embeddings | `all-MiniLM-L6-v2` (HuggingFace, local, free) |
+| Vector Store | FAISS (local) |
+| PDF Extraction | LangChain + PyPDF2 |
+| Web UI | Streamlit |
+| TTS | `edge-tts` (default) / Azure TTS (optional) |
+| Database | SQLite |
+| Visuals | Matplotlib |
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] 7 subjects (Math, Science, History, Geography, Myanmar, Art)
+- [ ] Multi-model routing (OpenAI GPT-4, Anthropic Claude)
+- [ ] Parent/teacher dashboard
+- [ ] Gamified lesson maps (like Duolingo)
+- [ ] Voice input (speech-to-text)
+- [ ] Mobile-responsive layout
+- [ ] Multiplayer/classroom mode
+
+---
+
+## 🤝 Contributing
+
+Pull requests are welcome! Please open an issue first to discuss major changes.
+
+---
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).

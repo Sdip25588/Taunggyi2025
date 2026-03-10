@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+.env
+data/students.db
+data/faiss_index/
+curriculum/phonics.pdf
+curriculum/reading.pdf
+curriculum/Spelling.pdf
+/tmp/*.mp3
