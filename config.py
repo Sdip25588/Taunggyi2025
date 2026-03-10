@@ -93,7 +93,7 @@ TTS_CONFIG: dict = {
 # App Settings
 # ─────────────────────────────────────────────
 APP_CONFIG: dict = {
-    "title": "Taunggyi English Tutor 🎓",
+    "title": "English Tutor 🎓",
     "icon": "📚",
     "layout": "wide",
     "theme_primary": "#4A90D9",
