@@ -273,3 +273,156 @@ def _find_weak_topics(mistake_history: list, subject: str) -> list[str]:
                 topic_mistake_count[topic] += 1
 
     return [t for t, c in topic_mistake_count.most_common() if c >= 2]
+
+
+# ─────────────────────────────────────────────
+# Smart Recommendation & Session Planning
+# ─────────────────────────────────────────────
+
+def get_next_lesson_recommendation(student_profile: dict, topic_mastery: dict) -> dict:
+    """
+    Smart recommendation engine based on mastery scores and confusion state.
+
+    Args:
+        student_profile: Full student profile dict from student.py.
+        topic_mastery: Dict {topic: mastery_float} from personalization_engine.
+
+    Returns:
+        Dict with: topic, mode ("teach"/"practice"/"review"), difficulty, reason.
+    """
+    from config import MASTERY_SKIP_THRESHOLD
+
+    subject = student_profile.get("current_subject", "Phonics")
+    topics = SUBJECT_TOPICS.get(subject, PHONICS_TOPICS)
+    confusion_count = student_profile.get("confusion_count", 0)
+    difficulty = student_profile.get("difficulty_level", "Beginner")
+
+    # Find weak topics (mastery < 60%)
+    weak_topics = [
+        t for t in topics
+        if topic_mastery.get(t, 0.5) < 0.60
+    ]
+
+    # Find mastered topics to skip
+    mastered_topics = [
+        t for t in topics
+        if topic_mastery.get(t, 0.5) >= MASTERY_SKIP_THRESHOLD
+    ]
+
+    # If confused, review a weak topic with a different strategy
+    if confusion_count >= 2 and weak_topics:
+        topic = weak_topics[0]
+        return {
+            "topic": topic,
+            "mode": "review",
+            "difficulty": difficulty,
+            "reason": f"Let's try a different approach for '{topic}' — I'll explain it a new way! 💡",
+        }
+
+    # If weak topics exist, practice them
+    if weak_topics:
+        topic = weak_topics[0]
+        return {
+            "topic": topic,
+            "mode": "practice",
+            "difficulty": difficulty,
+            "reason": f"Let's strengthen '{topic}' — you're almost there! 💪",
+        }
+
+    # No weak topics → advance to next content or next grade
+    current_idx = student_profile.get("current_lesson_index", 0)
+    next_topics = [t for t in topics[current_idx + 1:] if t not in mastered_topics]
+
+    if next_topics:
+        return {
+            "topic": next_topics[0],
+            "mode": "teach",
+            "difficulty": difficulty,
+            "reason": f"Ready for something new: **{next_topics[0]}**! 🚀",
+        }
+
+    # All topics covered — suggest advancing grade
+    return {
+        "topic": topics[-1] if topics else "Review",
+        "mode": "review",
+        "difficulty": difficulty,
+        "reason": "You've covered all topics! 🌟 Time to review and consider the next grade.",
+    }
+
+
+def should_skip_content(student_profile: dict, topic: str) -> tuple[bool, str]:
+    """
+    Determine if a topic should be skipped (already mastered).
+
+    Args:
+        student_profile: Full student profile dict.
+        topic: Topic name to evaluate.
+
+    Returns:
+        Tuple of (should_skip: bool, reason: str).
+    """
+    from config import MASTERY_SKIP_THRESHOLD
+
+    mastery = student_profile.get("topic_mastery", {})
+    topic_score = mastery.get(topic, 0.5)
+
+    if topic_score >= MASTERY_SKIP_THRESHOLD:
+        return True, f"You've already mastered '{topic}'! ⭐ We'll skip ahead."
+    return False, ""
+
+
+def generate_adaptive_session_plan(
+    student_profile: dict,
+    topic_mastery: dict,
+    session_duration_minutes: int = 30,
+) -> list[dict]:
+    """
+    Plan an entire learning session with balanced activities.
+
+    Args:
+        student_profile: Full student profile dict.
+        topic_mastery: Dict {topic: mastery_float}.
+        session_duration_minutes: Total session length in minutes.
+
+    Returns:
+        List of activity dicts: {activity_type, topic, duration, difficulty}.
+    """
+    from config import (
+        SESSION_WARMUP_RATIO,
+        SESSION_NEW_CONTENT_RATIO,
+        SESSION_PRACTICE_RATIO,
+        SESSION_COOLDOWN_RATIO,
+    )
+
+    subject = student_profile.get("current_subject", "Phonics")
+    topics = SUBJECT_TOPICS.get(subject, PHONICS_TOPICS)
+    difficulty = student_profile.get("difficulty_level", "Beginner")
+    current_idx = student_profile.get("current_lesson_index", 0)
+
+    warmup_min = round(session_duration_minutes * SESSION_WARMUP_RATIO)
+    new_min = round(session_duration_minutes * SESSION_NEW_CONTENT_RATIO)
+    practice_min = round(session_duration_minutes * SESSION_PRACTICE_RATIO)
+    cooldown_min = round(session_duration_minutes * SESSION_COOLDOWN_RATIO)
+
+    weak_topics = [
+        t for t in topics if topic_mastery.get(t, 0.5) < 0.60
+    ]
+    recent_topic = topics[max(0, current_idx - 1)] if current_idx > 0 else topics[0]
+    next_topic = topics[min(current_idx + 1, len(topics) - 1)]
+    practice_topic = weak_topics[0] if weak_topics else recent_topic
+    vocab_topic = next_topic
+
+    return [
+        {"activity_type": "review", "topic": recent_topic,
+         "duration": warmup_min, "difficulty": "easy",
+         "description": "Warm-up: quick review of recent content 🌟"},
+        {"activity_type": "teach", "topic": next_topic,
+         "duration": new_min, "difficulty": difficulty,
+         "description": f"New content: {next_topic} 📖"},
+        {"activity_type": "practice", "topic": practice_topic,
+         "duration": practice_min, "difficulty": difficulty,
+         "description": f"Practice: strengthen {practice_topic} 💪"},
+        {"activity_type": "vocabulary", "topic": vocab_topic,
+         "duration": cooldown_min, "difficulty": "easy",
+         "description": "Cool-down: vocabulary game 🎮"},
+    ]
