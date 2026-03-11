@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from config import APP_CONFIG
+from config import APP_CONFIG, MASTERY_ADVANCE_THRESHOLD
 
 DB_PATH: str = APP_CONFIG["db_path"]
 
@@ -44,9 +44,40 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             streak_days         INTEGER DEFAULT 0,
             last_streak_date    TEXT    DEFAULT '',
             badges              TEXT    DEFAULT '[]',
-            mistake_history     TEXT    DEFAULT '[]'
+            mistake_history     TEXT    DEFAULT '[]',
+            topic_mastery       TEXT    DEFAULT '{}',
+            vocabulary_bank     TEXT    DEFAULT '[]',
+            writing_samples     TEXT    DEFAULT '[]',
+            pronunciation_scores TEXT   DEFAULT '[]',
+            confusion_count     INTEGER DEFAULT 0,
+            hint_usage_count    INTEGER DEFAULT 0,
+            sessions_log        TEXT    DEFAULT '[]',
+            grade_advancement_history TEXT DEFAULT '[]',
+            pace_preference     TEXT    DEFAULT 'normal'
         )
     """)
+    conn.commit()
+    # Add new columns to existing databases (migration)
+    _migrate_columns(conn)
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> None:
+    """Add any missing columns to support schema migrations."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(students)").fetchall()}
+    new_columns = {
+        "topic_mastery":              "TEXT DEFAULT '{}'",
+        "vocabulary_bank":            "TEXT DEFAULT '[]'",
+        "writing_samples":            "TEXT DEFAULT '[]'",
+        "pronunciation_scores":       "TEXT DEFAULT '[]'",
+        "confusion_count":            "INTEGER DEFAULT 0",
+        "hint_usage_count":           "INTEGER DEFAULT 0",
+        "sessions_log":               "TEXT DEFAULT '[]'",
+        "grade_advancement_history":  "TEXT DEFAULT '[]'",
+        "pace_preference":            "TEXT DEFAULT 'normal'",
+    }
+    for col, definition in new_columns.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE students ADD COLUMN {col} {definition}")
     conn.commit()
 
 
@@ -282,6 +313,7 @@ def update_student_field(username: str, field: str, value) -> None:
         "current_subject":      "UPDATE students SET current_subject = ? WHERE username = ?",
         "current_lesson_index": "UPDATE students SET current_lesson_index = ? WHERE username = ?",
         "difficulty_level":     "UPDATE students SET difficulty_level = ? WHERE username = ?",
+        "pace_preference":      "UPDATE students SET pace_preference = ? WHERE username = ?",
     }
 
     if field not in _FIELD_QUERIES:
@@ -295,9 +327,283 @@ def update_student_field(username: str, field: str, value) -> None:
         conn.close()
 
 
+def update_topic_mastery(username: str, topic: str, new_mastery_value: float) -> None:
+    """
+    Update the mastery score for a specific topic in the student's profile.
+
+    Args:
+        username: Student's username.
+        topic: Topic identifier (e.g. 'short_vowels').
+        new_mastery_value: Float between 0 and 1.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT topic_mastery FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            return
+        mastery = json.loads(row["topic_mastery"] or "{}")
+        mastery[topic] = round(max(0.0, min(1.0, new_mastery_value)), 4)
+        conn.execute(
+            "UPDATE students SET topic_mastery = ? WHERE username = ?",
+            (json.dumps(mastery), username),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_topic_mastery(username: str) -> dict:
+    """Return the student's topic mastery as a dict {topic: float}."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT topic_mastery FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if row:
+            return json.loads(row["topic_mastery"] or "{}")
+        return {}
+    finally:
+        conn.close()
+
+
+def add_vocabulary_word(username: str, word_data: dict) -> None:
+    """
+    Add or update a word in the student's vocabulary bank.
+
+    Args:
+        username: Student's username.
+        word_data: Dict with keys: word, definition, times_seen, times_correct, last_seen.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT vocabulary_bank FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            return
+        bank: list = json.loads(row["vocabulary_bank"] or "[]")
+        # Update existing entry if word already in bank
+        for entry in bank:
+            if entry.get("word", "").lower() == word_data.get("word", "").lower():
+                entry.update(word_data)
+                break
+        else:
+            word_data.setdefault("times_seen", 1)
+            word_data.setdefault("times_correct", 0)
+            word_data.setdefault("last_seen", datetime.now().isoformat())
+            bank.append(word_data)
+        # Keep last 500 words
+        bank = bank[-500:]
+        conn.execute(
+            "UPDATE students SET vocabulary_bank = ? WHERE username = ?",
+            (json.dumps(bank), username),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_vocabulary_bank(username: str) -> list:
+    """Return the student's vocabulary bank as a list of dicts."""
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT vocabulary_bank FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if row:
+            return json.loads(row["vocabulary_bank"] or "[]")
+        return []
+    finally:
+        conn.close()
+
+
+def add_writing_sample(username: str, sample_data: dict) -> None:
+    """
+    Append a writing sample to the student's history.
+
+    Args:
+        username: Student's username.
+        sample_data: Dict with keys: prompt, response, feedback, score, timestamp.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT writing_samples FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            return
+        samples: list = json.loads(row["writing_samples"] or "[]")
+        sample_data.setdefault("timestamp", datetime.now().isoformat())
+        samples.append(sample_data)
+        samples = samples[-50:]  # Keep last 50 writing samples
+        conn.execute(
+            "UPDATE students SET writing_samples = ? WHERE username = ?",
+            (json.dumps(samples), username),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_pronunciation_score(username: str, score_data: dict) -> None:
+    """
+    Append a pronunciation score entry to the student's history.
+
+    Args:
+        username: Student's username.
+        score_data: Dict with keys: word, similarity_score, timestamp.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT pronunciation_scores FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            return
+        scores: list = json.loads(row["pronunciation_scores"] or "[]")
+        score_data.setdefault("timestamp", datetime.now().isoformat())
+        scores.append(score_data)
+        scores = scores[-200:]  # Keep last 200 scores
+        conn.execute(
+            "UPDATE students SET pronunciation_scores = ? WHERE username = ?",
+            (json.dumps(scores), username),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def log_session(username: str, session_data: dict) -> None:
+    """
+    Append a session summary to the student's session log.
+
+    Args:
+        username: Student's username.
+        session_data: Dict with keys: date, duration, topics, accuracy, words_learned.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT sessions_log FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            return
+        sessions: list = json.loads(row["sessions_log"] or "[]")
+        session_data.setdefault("date", datetime.now().isoformat())
+        sessions.append(session_data)
+        sessions = sessions[-90:]  # Keep last 90 sessions (~3 months)
+        conn.execute(
+            "UPDATE students SET sessions_log = ? WHERE username = ?",
+            (json.dumps(sessions), username),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_weekly_progress(username: str) -> list:
+    """
+    Return accuracy data for the last 7 days from session logs.
+
+    Returns:
+        List of dicts: [{date, accuracy, topics_count}, ...]
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT sessions_log FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            return []
+        sessions: list = json.loads(row["sessions_log"] or "[]")
+        cutoff = (datetime.now() - timedelta(days=7)).isoformat()
+        recent = [s for s in sessions if s.get("date", "") >= cutoff]
+        return recent[-7:]
+    finally:
+        conn.close()
+
+
+def increment_confusion_count(username: str) -> None:
+    """Increment the confusion detection counter for the student."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "UPDATE students SET confusion_count = confusion_count + 1 WHERE username = ?",
+            (username,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def increment_hint_usage(username: str) -> None:
+    """Increment the hint usage counter for the student."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "UPDATE students SET hint_usage_count = hint_usage_count + 1 WHERE username = ?",
+            (username,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def check_grade_readiness(username: str) -> dict:
+    """
+    Calculate how close the student is to advancing to the next grade.
+
+    Returns:
+        Dict with: mastery_pct, ready_to_advance, current_grade, next_grade, message.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT grade_level, topic_mastery FROM students WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            return {"mastery_pct": 0.0, "ready_to_advance": False, "current_grade": 1}
+        mastery: dict = json.loads(row["topic_mastery"] or "{}")
+        current_grade = row["grade_level"]
+        if mastery:
+            avg_mastery = sum(mastery.values()) / len(mastery)
+        else:
+            avg_mastery = 0.0
+        ready = avg_mastery >= MASTERY_ADVANCE_THRESHOLD
+        pct = round(avg_mastery * 100, 1)
+        if ready:
+            message = (
+                f"🎉 Amazing! You've mastered {pct}% of Grade {current_grade} content! "
+                f"Would you like to explore Grade {current_grade + 1}? 🌟"
+            )
+        else:
+            needed = round((MASTERY_ADVANCE_THRESHOLD - avg_mastery) * 100, 1)
+            message = (
+                f"You've mastered {pct}% of Grade {current_grade} content. "
+                f"Keep going — just {needed}% more to reach Grade {current_grade + 1}! 🚀"
+            )
+        return {
+            "mastery_pct": pct,
+            "ready_to_advance": ready,
+            "current_grade": current_grade,
+            "next_grade": current_grade + 1,
+            "message": message,
+        }
+    finally:
+        conn.close()
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict:
     """Convert a sqlite3.Row to a plain Python dict."""
     d = dict(row)
     d["badges"] = json.loads(d.get("badges") or "[]")
     d["mistake_history"] = json.loads(d.get("mistake_history") or "[]")
+    d["topic_mastery"] = json.loads(d.get("topic_mastery") or "{}")
+    d["vocabulary_bank"] = json.loads(d.get("vocabulary_bank") or "[]")
+    d["writing_samples"] = json.loads(d.get("writing_samples") or "[]")
+    d["pronunciation_scores"] = json.loads(d.get("pronunciation_scores") or "[]")
+    d["sessions_log"] = json.loads(d.get("sessions_log") or "[]")
+    d["grade_advancement_history"] = json.loads(d.get("grade_advancement_history") or "[]")
     return d
