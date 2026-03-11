@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import tempfile
+import unicodedata
 from typing import Optional
 
 from config import (
@@ -44,19 +45,6 @@ EMOJI_TONE_STYLES: dict = {
     "🎮": "cheerful", "🎨": "cheerful", "🚀": "cheerful",
 }
 
-# Regex to match emoji characters
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001F600-\U0001F64F"  # emoticons
-    "\U0001F300-\U0001F5FF"  # symbols & pictographs
-    "\U0001F680-\U0001F6FF"  # transport & map
-    "\U0001F1E0-\U0001F1FF"  # flags
-    "\U00002702-\U000027B0"
-    "\U000024C2-\U0001F251"
-    "]+",
-    flags=re.UNICODE,
-)
-
 # Azure Neural voice SSML style map
 _AZURE_VOICE_STYLES: dict = {
     "cheerful": "cheerful",
@@ -65,6 +53,32 @@ _AZURE_VOICE_STYLES: dict = {
     "gentle": "gentle",
     "default": "friendly",
 }
+
+
+def _strip_emojis(text: str) -> str:
+    """
+    Remove emoji and pictographic characters from text using Unicode category detection.
+
+    Uses unicodedata.category to identify symbol characters (category 'So' = Other Symbol)
+    and other non-letter, non-digit pictographic characters, avoiding overly broad regex ranges.
+    """
+    result = []
+    for char in text:
+        cat = unicodedata.category(char)
+        cp = ord(char)
+        # Keep standard ASCII and letter/number/punctuation categories
+        # Remove: So (Other Symbol), Mn if high codepoint (combining marks in emoji sequences)
+        # and characters in the Supplementary Multilingual Plane (emoji range > U+1F000)
+        if cp > 0x1F000:
+            continue  # Skip emoji and pictographic characters in SMP
+        if cat in ("So", "Sk") and cp > 0x2000:
+            continue  # Skip other symbols that are emoji-like
+        result.append(char)
+    # Also remove variation selector characters (U+FE0F etc.) that follow emoji
+    cleaned = "".join(result)
+    # Remove variation selectors (U+FE00 to U+FE0F)
+    cleaned = re.sub(r"[\uFE00-\uFE0F]", "", cleaned)
+    return cleaned
 
 
 # ─────────────────────────────────────────────
@@ -97,7 +111,7 @@ def prepare_text_for_tts(text: str) -> tuple[str, str]:
     clean = re.sub(r"^\s*[-*+]\s+", "", clean, flags=re.MULTILINE)
 
     # Strip all emojis (voice tone handles the emotion)
-    clean = _EMOJI_RE.sub("", clean)
+    clean = _strip_emojis(clean)
 
     # Normalise whitespace
     clean = re.sub(r"\s+", " ", clean).strip()
@@ -119,7 +133,7 @@ def _detect_voice_style(text: str) -> str:
 
     if not style_counts:
         return "friendly"
-    return max(style_counts, key=style_counts.get)  # type: ignore[arg-type]
+    return max(style_counts, key=lambda x: style_counts[x])
 
 
 # ─────────────────────────────────────────────
@@ -178,7 +192,7 @@ def _azure_stt(audio_bytes: bytes) -> dict:
 
             result = recognizer.recognize_once()
 
-            if result.reason.name == "RecognizedSpeech":
+            if result.reason == speechsdk.ResultReason.RecognizedSpeech:
                 return {
                     "success": True,
                     "text": result.text,
@@ -319,7 +333,7 @@ def _azure_tts_ssml(text: str, voice_style: str = "friendly") -> Optional[str]:
         )
         result = synthesizer.speak_ssml_async(ssml).get()
 
-        if result.reason.name == "SynthesizingAudioCompleted":
+        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
             return tmp_path
         else:
             logger.warning("Azure TTS SSML failed: %s", result.reason)
@@ -435,7 +449,8 @@ def evaluate_pronunciation(
 
     else:
         # Find the first different part
-        syllables = _break_into_syllables(expected_text.split()[0] if expected_text.split() else expected_text)
+        first_words = expected_text.split()
+        syllables = _break_into_syllables(first_words[0] if first_words else expected_text)
         feedback = (
             f"Let's practice this together step by step. "
             f"I'll say it slowly: {syllables}. "

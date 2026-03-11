@@ -7,6 +7,7 @@ LLM calls, mistake analysis, student profile updates, and visual generation.
 
 import json
 import logging
+import re
 from typing import Optional
 
 from config import APP_CONFIG
@@ -20,6 +21,9 @@ import personalization_engine
 
 logger = logging.getLogger(__name__)
 
+# Default score assigned to a writing sample for tracking purposes
+_DEFAULT_WRITING_SCORE = 0.7
+
 # ─────────────────────────────────────────────
 # Intent detection keywords
 # ─────────────────────────────────────────────
@@ -27,14 +31,14 @@ QUIZ_KEYWORDS = {"quiz", "test", "question", "practise", "practice", "try", "cha
 REVIEW_KEYWORDS = {"review", "revise", "revision", "remind", "recap", "again", "redo"}
 LESSON_KEYWORDS = {"teach", "learn", "explain", "what is", "how do", "show me", "tell me"}
 VISUAL_KEYWORDS = {"chart", "diagram", "picture", "show", "alphabet", "phonics chart"}
-READ_ALOUD_KEYWORDS = {"read aloud", "read out", "reading practice", "read this", "pronounce",
+READ_ALOUD_KEYWORDS = {"read aloud", "read out", "reading practice", "read this",
                        "i'll read", "let me read", "practice reading"}
 VOCABULARY_KEYWORDS = {"vocabulary", "vocab", "new words", "word list", "define", "meaning",
                        "what does", "word of the day"}
 WRITE_KEYWORDS = {"write", "writing", "grammar", "sentence", "compose", "let me write",
                   "writing practice", "write a sentence"}
 PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say this",
-                          "how is it said", "sound out"}
+                          "how is it said", "sound out", "pronounce"}
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
@@ -624,7 +628,7 @@ def _handle_writing_request(
             "prompt": writing_prompt,
             "response": student_input,
             "feedback": response_text[:200],
-            "score": 0.7,  # Default; could be enhanced with LLM scoring
+            "score": _DEFAULT_WRITING_SCORE,
         })
     else:
         # Student wants a writing prompt
@@ -761,7 +765,6 @@ def _extract_pronunciation_target(student_input: str, current_topic: str) -> str
     """Extract the target word/phrase the student wants to pronounce."""
     text = student_input.lower()
     # Try to find quoted word
-    import re
     quoted = re.findall(r"[\"'](.+?)[\"']", student_input)
     if quoted:
         return quoted[0]

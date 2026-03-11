@@ -630,7 +630,10 @@ def _render_voice_input_panel(
         )
         if uploaded:
             audio_bytes = uploaded.read()
-            st.audio(audio_bytes, format=f"audio/{uploaded.type.split('/')[1]}")
+            # Determine format safely
+            mime_type = uploaded.type or "audio/wav"
+            audio_format = mime_type.split("/")[1] if "/" in mime_type else "wav"
+            st.audio(audio_bytes, format=f"audio/{audio_format}")
             if st.button("📨 Submit Audio", key="submit_audio"):
                 with st.spinner("Converting speech to text... 🎤"):
                     from voice_engine import listen_to_student
@@ -740,25 +743,26 @@ def _azure_tts(text: str) -> Optional[str]:
 def _strip_markdown(text: str) -> str:
     """Remove common Markdown formatting and emojis for clean TTS output."""
     import re
+    import unicodedata
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
     text = re.sub(r"#{1,6}\s+", "", text)
     text = re.sub(r"`(.+?)`", r"\1", text)
     text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
     text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
-    # Strip emojis so Azure/edge-tts doesn't read "star emoji", "smiling face", etc.
-    emoji_re = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"
-        "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF"
-        "\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251"
-        "]+",
-        flags=re.UNICODE,
-    )
-    text = emoji_re.sub("", text)
+    # Strip emojis using unicodedata to avoid overly-broad regex ranges
+    result = []
+    for char in text:
+        cp = ord(char)
+        cat = unicodedata.category(char)
+        if cp > 0x1F000:
+            continue  # Skip SMP emoji characters
+        if cat in ("So", "Sk") and cp > 0x2000:
+            continue  # Skip other symbol emoji-like characters
+        result.append(char)
+    text = "".join(result)
+    # Remove variation selectors
+    text = re.sub(r"[\uFE00-\uFE0F]", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
 

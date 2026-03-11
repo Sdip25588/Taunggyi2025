@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from config import APP_CONFIG
+from config import APP_CONFIG, MASTERY_ADVANCE_THRESHOLD
 
 DB_PATH: str = APP_CONFIG["db_path"]
 
@@ -558,7 +558,6 @@ def check_grade_readiness(username: str) -> dict:
     Returns:
         Dict with: mastery_pct, ready_to_advance, current_grade, next_grade, message.
     """
-    from config import MASTERY_ADVANCE_THRESHOLD
     conn = _get_connection()
     try:
         row = conn.execute(

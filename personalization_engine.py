@@ -15,6 +15,7 @@ from config import (
     HINT_LEVELS,
     PACE_FAST_THRESHOLD,
     PACE_SLOW_THRESHOLD,
+    GRADE_LEVELS,
 )
 
 # ─────────────────────────────────────────────
@@ -291,7 +292,7 @@ def check_grade_advancement(student_profile: dict, topic_mastery: dict) -> dict:
                topic_mastery: dict, eligible_topics: list}
     """
     current_grade = student_profile.get("grade_level", 1)
-    max_grade = 5  # from GRADE_LEVELS in config
+    max_grade = max(GRADE_LEVELS)
 
     if current_grade >= max_grade:
         return {
