@@ -140,6 +140,40 @@ def _detect_voice_style(text: str) -> str:
 # Speech-to-Text
 # ─────────────────────────────────────────────
 
+def transcribe_audio_bytes(audio_bytes: bytes) -> str:
+    """
+    Convenience wrapper: convert raw audio bytes to a transcription string.
+
+    Returns the transcribed text, or an empty string on failure.
+    Suitable for use inside the conversation loop without handling the full
+    dict result from listen_to_student.
+
+    Args:
+        audio_bytes: Raw audio bytes (WAV or MP3).
+
+    Returns:
+        Transcribed text string, or "" if recognition failed.
+    """
+    result = listen_to_student(audio_bytes)
+    return result.get("text", "") if result.get("success") else ""
+
+
+def synthesize_speech(text: str, voice_style: str = "friendly") -> Optional[str]:
+    """
+    Convenience wrapper: convert text to speech and return the audio file path.
+
+    Strips emojis and markdown before synthesis. Delegates to speak_response.
+
+    Args:
+        text: Text to speak (may contain emojis/markdown — they will be stripped).
+        voice_style: SSML style hint ("cheerful", "friendly", "calm", "gentle").
+
+    Returns:
+        Path to the generated MP3 file, or None on failure.
+    """
+    return speak_response(text, voice_style=voice_style)
+
+
 def listen_to_student(audio_bytes: Optional[bytes] = None) -> dict:
     """
     Convert student audio to text using Azure STT or SpeechRecognition fallback.

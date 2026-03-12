@@ -3,6 +3,13 @@ learning_orchestrator.py — Central coordinator for learning sessions.
 
 Receives student input, determines intent, orchestrates RAG retrieval,
 LLM calls, mistake analysis, student profile updates, and visual generation.
+
+Also manages the voice-first Conversation Mode state machine:
+  GREETING → CHECKIN → LESSON → WRAPUP
+
+  Note: The INTENT stage is folded into the CHECKIN → LESSON transition.
+  When the student selects a subject/topic in CHECKIN, the state moves directly
+  to LESSON (no separate INTENT state needed).
 """
 
 import json
@@ -23,6 +30,246 @@ logger = logging.getLogger(__name__)
 
 # Default score assigned to a writing sample for tracking purposes
 _DEFAULT_WRITING_SCORE = 0.7
+
+# ─────────────────────────────────────────────
+# Conversation State Machine
+# ─────────────────────────────────────────────
+
+class ConversationState:
+    """Enumeration of dialog stages for the voice-first conversational loop."""
+    GREETING = "GREETING"
+    CHECKIN = "CHECKIN"
+    INTENT = "INTENT"
+    LESSON = "LESSON"
+    WRAPUP = "WRAPUP"
+
+
+# Mood keywords for supportive detection during check-in
+_NEGATIVE_MOOD_WORDS = {
+    "sad", "tired", "bad", "not good", "awful", "terrible", "sick", "upset",
+    "bored", "confused", "frustrated", "stressed", "unhappy", "worried", "scared",
+    "not great", "not well", "okay i guess", "so so",
+}
+_POSITIVE_MOOD_WORDS = {
+    "good", "great", "fine", "okay", "well", "happy", "wonderful", "amazing",
+    "fantastic", "excellent", "super", "brilliant", "ready", "excited",
+}
+
+# Subject/intent selection keywords for the CHECKIN → INTENT transition
+_PHONICS_WORDS = {"phonics", "sounds", "letters", "alphabet"}
+_READING_WORDS = {"reading", "read", "story", "text", "passage"}
+_SPELLING_WORDS = {"spelling", "spell", "words", "word"}
+_CONTINUE_WORDS = {"continue", "same", "last time", "where we left", "again", "that"}
+
+
+def get_initial_greeting(name: str) -> str:
+    """Return the opening greeting message for a new session."""
+    return f"Hello {name}! How are you today? 😊"
+
+
+def _detect_mood(text: str) -> str:
+    """Detect student mood from utterance. Returns 'positive', 'negative', or 'neutral'."""
+    lower = text.lower()
+    if any(word in lower for word in _NEGATIVE_MOOD_WORDS):
+        return "negative"
+    if any(word in lower for word in _POSITIVE_MOOD_WORDS):
+        return "positive"
+    return "neutral"
+
+
+def _detect_subject_intent(text: str, current_subject: str) -> Optional[str]:
+    """
+    Detect if the student is selecting a subject or asking to continue.
+
+    Returns subject name ("Phonics", "Reading", "Spelling"), "continue", or None.
+    """
+    lower = text.lower()
+    if any(w in lower for w in _CONTINUE_WORDS):
+        return "continue"
+    if any(w in lower for w in _PHONICS_WORDS):
+        return "Phonics"
+    if any(w in lower for w in _READING_WORDS):
+        return "Reading"
+    if any(w in lower for w in _SPELLING_WORDS):
+        return "Spelling"
+    return None
+
+
+def handle_student_utterance(
+    state: str,
+    utterance: str,
+    username: str,
+    subject: str,
+    grade: int,
+    current_topic: str,
+    session_history: Optional[list] = None,
+) -> dict:
+    """
+    Process a student utterance within the conversation state machine.
+
+    Handles direct questions at any state (answers them, then resumes state).
+    If a mood of confusion/negativity is detected during CHECKIN, responds
+    supportively before moving on.
+
+    Args:
+        state: Current ConversationState value.
+        utterance: What the student said or typed.
+        username: Student's name.
+        subject: Current subject.
+        grade: Grade level (1-5).
+        current_topic: Current lesson topic.
+        session_history: Previous messages for context.
+
+    Returns:
+        Dict with keys:
+          - "new_state": str — next ConversationState
+          - "tutor_text": str — what the tutor says next (shown in chat + TTS)
+          - "lesson_intent": str or None — if LESSON started, the intent to pass on
+          - "subject_switch": str or None — if subject changed
+    """
+    profile = student_db.get_or_create_student(username)
+    stats = student_db.get_stats(username)
+
+    detected = determine_intent(utterance)
+
+    # ── Inline direct-question answering: only during CHECKIN (not GREETING or LESSON) ──
+    # During GREETING we want the mood/check-in flow uninterrupted.
+    # During LESSON process_student_input handles all intents directly.
+    direct_question_intents = {"lesson", "pronunciation", "vocabulary", "hint"}
+    if state == ConversationState.CHECKIN and detected in direct_question_intents:
+        answer = _quick_answer(utterance, subject, grade, current_topic)
+        resume_prompt = _get_state_resume_prompt(state, username, subject, current_topic, stats)
+        return {
+            "new_state": state,
+            "tutor_text": f"{answer}\n\n{resume_prompt}",
+            "lesson_intent": None,
+            "subject_switch": None,
+        }
+
+    # ── State-specific handling ──
+    if state == ConversationState.GREETING:
+        mood = _detect_mood(utterance)
+        if mood == "negative":
+            tutor_text = (
+                f"I'm sorry to hear that! It's okay — learning can actually cheer us up. 💙 "
+                f"I'm here with you. What would you like to practice today? "
+                f"We have Phonics, Reading, or Spelling!"
+            )
+        elif mood == "positive":
+            tutor_text = (
+                f"That's wonderful to hear! 🌟 "
+                f"I'm glad you're feeling good today! "
+                f"What would you like to practice? We can do Phonics, Reading, or Spelling. "
+                f"Or shall we continue with **{current_topic}**?"
+            )
+        else:
+            tutor_text = (
+                f"Thank you for sharing! 😊 "
+                f"What would you like to practice today? "
+                f"We have **Phonics**, **Reading**, or **Spelling**. "
+                f"Or shall we pick up where we left off with **{current_topic}**?"
+            )
+        return {
+            "new_state": ConversationState.CHECKIN,
+            "tutor_text": tutor_text,
+            "lesson_intent": None,
+            "subject_switch": None,
+        }
+
+    if state == ConversationState.CHECKIN:
+        chosen = _detect_subject_intent(utterance, subject)
+        if chosen == "continue" or chosen is None:
+            # Continue with current subject
+            next_subject = subject
+            tutor_text = (
+                f"Great! Let's continue with **{subject} — {current_topic}**. 📚\n\n"
+                f"I'll start the lesson now. Feel free to ask questions at any time!"
+            )
+        else:
+            next_subject = chosen
+            tutor_text = (
+                f"Excellent choice! Let's work on **{next_subject}** today. 🎯\n\n"
+                f"I'll start the lesson now. Feel free to ask questions anytime!"
+            )
+        return {
+            "new_state": ConversationState.LESSON,
+            "tutor_text": tutor_text,
+            "lesson_intent": "lesson",
+            "subject_switch": next_subject if next_subject != subject else None,
+        }
+
+    if state == ConversationState.LESSON:
+        # In LESSON state, fall through to normal process_student_input
+        return {
+            "new_state": ConversationState.LESSON,
+            "tutor_text": "",   # Will be filled by process_student_input
+            "lesson_intent": detected,
+            "subject_switch": None,
+        }
+
+    if state == ConversationState.WRAPUP:
+        # Student responded to wrap-up — either continue or end
+        lower = utterance.lower()
+        if any(w in lower for w in {"yes", "sure", "okay", "ok", "more", "continue", "another"}):
+            return {
+                "new_state": ConversationState.LESSON,
+                "tutor_text": f"Wonderful! Let's keep going! 🚀 What would you like to do — quiz, lesson, or something else?",
+                "lesson_intent": "lesson",
+                "subject_switch": None,
+            }
+        else:
+            return {
+                "new_state": ConversationState.WRAPUP,
+                "tutor_text": (
+                    f"Fantastic work today, {username}! 🌟 "
+                    f"Come back whenever you're ready to learn more. See you next time! 👋"
+                ),
+                "lesson_intent": None,
+                "subject_switch": None,
+            }
+
+    # Default fallback — treat as LESSON
+    return {
+        "new_state": ConversationState.LESSON,
+        "tutor_text": "",
+        "lesson_intent": detected,
+        "subject_switch": None,
+    }
+
+
+def get_wrapup_message(username: str) -> str:
+    """Return a warm wrap-up message to end the session."""
+    return (
+        f"You did an amazing job today, {username}! 🌟🎉 "
+        f"I'm really proud of your effort. "
+        f"Would you like to try one more thing, or shall we finish here?"
+    )
+
+
+def _get_state_resume_prompt(
+    state: str, username: str, subject: str, current_topic: str, stats: dict
+) -> str:
+    """Return the re-engagement prompt to resume after answering an inline question."""
+    if state == ConversationState.CHECKIN:
+        return (
+            f"Now, what would you like to practice today — "
+            f"**Phonics**, **Reading**, or **Spelling**? "
+            f"Or shall we continue with **{current_topic}**?"
+        )
+    return f"Shall we get back to our lesson on **{current_topic}**? 😊"
+
+
+def _quick_answer(utterance: str, subject: str, grade: int, current_topic: str) -> str:
+    """Generate a quick inline answer to a direct question using the LLM."""
+    prompt = (
+        f"A Grade {grade} student asked a question during a conversation: '{utterance}'. "
+        f"Give a short, clear, child-friendly answer (2-3 sentences max). "
+        f"Do not use bullet points. Keep it conversational."
+    )
+    try:
+        return ai_teacher.call_llm(prompt, mode="explain", subject=subject)
+    except Exception:
+        return "That's a great question! Let's keep that in mind as we continue."
 
 # ─────────────────────────────────────────────
 # Intent detection keywords
