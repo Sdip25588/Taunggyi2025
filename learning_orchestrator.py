@@ -5,7 +5,11 @@ Receives student input, determines intent, orchestrates RAG retrieval,
 LLM calls, mistake analysis, student profile updates, and visual generation.
 
 Also manages the voice-first Conversation Mode state machine:
-  GREETING → CHECKIN → INTENT → LESSON → WRAPUP
+  GREETING → CHECKIN → LESSON → WRAPUP
+
+  Note: The INTENT stage is folded into the CHECKIN → LESSON transition.
+  When the student selects a subject/topic in CHECKIN, the state moves directly
+  to LESSON (no separate INTENT state needed).
 """
 
 import json
@@ -126,13 +130,13 @@ def handle_student_utterance(
     profile = student_db.get_or_create_student(username)
     stats = student_db.get_stats(username)
 
-    # ── Detect if student is asking a direct question (regardless of state) ──
-    direct_question_intents = {"lesson", "pronunciation", "vocabulary", "hint"}
     detected = determine_intent(utterance)
-    is_direct_question = detected in direct_question_intents and state != ConversationState.LESSON
 
-    if is_direct_question and state not in (ConversationState.GREETING, ConversationState.LESSON):
-        # Answer the question inline, then prompt to resume
+    # ── Inline direct-question answering: only during CHECKIN (not GREETING or LESSON) ──
+    # During GREETING we want the mood/check-in flow uninterrupted.
+    # During LESSON process_student_input handles all intents directly.
+    direct_question_intents = {"lesson", "pronunciation", "vocabulary", "hint"}
+    if state == ConversationState.CHECKIN and detected in direct_question_intents:
         answer = _quick_answer(utterance, subject, grade, current_topic)
         resume_prompt = _get_state_resume_prompt(state, username, subject, current_topic, stats)
         return {

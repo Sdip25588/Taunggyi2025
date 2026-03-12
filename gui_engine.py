@@ -16,6 +16,7 @@ import streamlit as st
 
 from config import APP_CONFIG, TTS_CONFIG
 import learning_orchestrator
+from learning_orchestrator import ConversationState, handle_student_utterance
 import visual_teacher
 import adaptive_path
 import student as student_db
@@ -135,10 +136,10 @@ def _render_sidebar() -> None:
             st.rerun()
 
         if st.session_state.get("conversation_mode"):
-            conv_state = st.session_state.get("conversation_state", "GREETING")
+            conv_state = st.session_state.get("conversation_state", ConversationState.GREETING)
             st.caption(f"💬 Stage: **{conv_state}**")
             if st.button("🔁 Restart Conversation", use_container_width=True, key="restart_conv"):
-                from learning_orchestrator import ConversationState, get_initial_greeting
+                from learning_orchestrator import get_initial_greeting
                 username_r = st.session_state.student_profile.get("username", "Student")
                 greeting = get_initial_greeting(username_r)
                 st.session_state.chat_history = [{
@@ -213,9 +214,9 @@ def _render_chat_tab(
 
     # Conversation mode: show prominent tutor prompt card when not in LESSON stage
     conv_mode = st.session_state.get("conversation_mode", True)
-    conv_state = st.session_state.get("conversation_state", "LESSON")
+    conv_state = st.session_state.get("conversation_state", ConversationState.LESSON)
 
-    if conv_mode and conv_state != "LESSON":
+    if conv_mode and conv_state != ConversationState.LESSON:
         _render_conversation_prompt_card(username, grade, subject, current_topic, stats)
         return  # Conversation card handles input; skip the regular chat below
 
@@ -335,8 +336,6 @@ def _render_conversation_prompt_card(
     Render the conversation mode card: shows the latest tutor prompt prominently,
     a voice recorder, and a text fallback. Used when conversation_state != LESSON.
     """
-    from learning_orchestrator import handle_student_utterance, ConversationState
-
     # ── Tutor prompt banner ──
     pending_prompt = st.session_state.get("pending_tutor_prompt", "")
     if pending_prompt:
