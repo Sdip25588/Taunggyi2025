@@ -87,6 +87,12 @@ def _init_session_state() -> None:
         "rag_initialised": False,
         "show_visual": False,
         "suggested_visual": None,
+        # Conversation mode state
+        "conversation_mode": True,
+        "conversation_state": "GREETING",
+        "pending_tutor_prompt": "",
+        "awaiting_student_reply": False,
+        "conversation_greeted": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -200,6 +206,20 @@ def _render_login() -> None:
                 st.session_state.current_subject = profile.get(
                     "current_subject", "Phonics"
                 )
+
+                # Initialise conversation mode for this new session
+                from learning_orchestrator import get_initial_greeting, ConversationState
+                greeting_text = get_initial_greeting(username.strip())
+                st.session_state.chat_history = [{
+                    "role": "assistant",
+                    "content": greeting_text,
+                    "id": 0,
+                }]
+                st.session_state.conversation_state = ConversationState.GREETING
+                st.session_state.awaiting_student_reply = True
+                st.session_state.pending_tutor_prompt = greeting_text
+                st.session_state.conversation_greeted = True
+
                 st.rerun()
 
     # Feature highlights
