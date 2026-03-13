@@ -6,7 +6,7 @@ recommends next topics, and generates adaptive quiz focus areas.
 """
 
 from collections import Counter
-from typing import Optional
+from typing import Dict, Optional
 
 # ─────────────────────────────────────────────
 # Difficulty levels within the Grades 1-3 scope
@@ -369,6 +369,127 @@ def should_skip_content(student_profile: dict, topic: str) -> tuple[bool, str]:
     if topic_score >= MASTERY_SKIP_THRESHOLD:
         return True, f"You've already mastered '{topic}'! ⭐ We'll skip ahead."
     return False, ""
+
+
+def choose_todays_focus(
+    student_profile: dict,
+    topic_mastery: dict,
+    last_session_subject: Optional[str] = None,
+) -> dict:
+    """
+    Strategy B: Choose today's lesson focus by balancing weak areas and variety.
+
+    Algorithm:
+    1. Score each subject by weakness (lower avg mastery → higher priority).
+    2. Apply a variety penalty when the same subject was used last session,
+       unless it is still significantly weak (avg mastery < STRONG_MASTERY_CUTOFF).
+    3. Select the highest-scored subject.
+    4. Within that subject, pick the weakest un-mastered topic.
+    5. Return a friendly reason message explaining the choice.
+
+    Args:
+        student_profile: Full student profile dict from student.py.
+        topic_mastery:   Dict {topic: mastery_float (0–1)}.
+        last_session_subject: Subject name used in the previous session (for variety).
+
+    Returns:
+        Dict with: subject, topic, reason, topic_mastery_score, strategy.
+    """
+    subjects = list(SUBJECT_TOPICS.keys())  # ["Phonics", "Reading", "Spelling"]
+
+    # ── 1. Per-subject average mastery ──────────────────────────────────────
+    subject_avg: Dict[str, float] = {}
+    for subj in subjects:
+        topics = SUBJECT_TOPICS[subj]
+        masteries = [topic_mastery.get(t, 0.5) for t in topics]
+        subject_avg[subj] = sum(masteries) / len(masteries)
+
+    # ── 2. Priority score = weakness score with optional variety penalty ─────
+    VARIETY_PENALTY = 0.20        # reduce score if same as last session
+    STRONG_MASTERY_CUTOFF = 0.45  # below this → ignore penalty (still needs work)
+
+    priority: Dict[str, float] = {}
+    for subj in subjects:
+        score = 1.0 - subject_avg[subj]  # higher score = weaker
+        if (
+            last_session_subject
+            and last_session_subject == subj
+            and subject_avg[subj] >= STRONG_MASTERY_CUTOFF
+        ):
+            score -= VARIETY_PENALTY
+        priority[subj] = score
+
+    # ── 3. Choose highest-priority subject ──────────────────────────────────
+    chosen_subject = max(priority, key=lambda s: priority[s])
+
+    # ── 4. Within subject, pick weakest un-mastered topic ───────────────────
+    MASTERY_SKIP = 0.90
+    topics_with_scores = [
+        (t, topic_mastery.get(t, 0.5)) for t in SUBJECT_TOPICS[chosen_subject]
+    ]
+    candidates = [(t, m) for t, m in topics_with_scores if m < MASTERY_SKIP]
+    if not candidates:
+        candidates = topics_with_scores  # all mastered — still pick the weakest
+    chosen_topic, topic_score = min(candidates, key=lambda x: x[1])
+
+    # ── 5. Build a friendly reason ───────────────────────────────────────────
+    reason = _build_focus_reason(
+        chosen_subject, chosen_topic, topic_score,
+        last_session_subject, subject_avg,
+    )
+
+    return {
+        "subject": chosen_subject,
+        "topic": chosen_topic,
+        "reason": reason,
+        "topic_mastery_score": round(topic_score, 3),
+        "strategy": "B",
+    }
+
+
+def _build_focus_reason(
+    subject: str,
+    topic: str,
+    topic_score: float,
+    last_subject: Optional[str],
+    subject_avg: Dict[str, float],
+) -> str:
+    """Return a short, friendly explanation for why this focus was chosen today."""
+    # Describe the chosen topic's current strength level
+    if topic_score < 0.40:
+        strength_clause = (
+            f"you're still building confidence with **{topic}**"
+        )
+    elif topic_score < 0.60:
+        strength_clause = (
+            f"a little more practice on **{topic}** will really pay off"
+        )
+    else:
+        strength_clause = (
+            f"**{topic}** is almost there — just a little more polish needed"
+        )
+
+    # Explain subject variety if relevant
+    strong_subjects = [
+        s for s, m in subject_avg.items() if m >= 0.65 and s != subject
+    ]
+    if strong_subjects:
+        contrast = f"You're already strong in {' and '.join(strong_subjects)}, so "
+    else:
+        contrast = "Today "
+
+    variety_note = ""
+    if last_subject and last_subject != subject:
+        variety_note = (
+            f" We're switching from **{last_subject}** today to keep things fresh! 🌈"
+        )
+    elif last_subject and last_subject == subject:
+        variety_note = " We're continuing this subject because it still needs some attention."
+
+    return (
+        f"{contrast}{strength_clause}.{variety_note} "
+        f"Today we'll focus on **{subject} — {topic}**. Let's go! 🎯"
+    )
 
 
 def generate_adaptive_session_plan(

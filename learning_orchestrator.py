@@ -44,6 +44,64 @@ ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
 
 
+def get_professor_todays_focus(username: str) -> dict:
+    """
+    Professor-led daily lesson focus using Strategy B (balance weak areas + variety)
+    combined with gradual upgrade logic for strong performers.
+
+    Call this once per session start to let the AI teacher decide what to teach today.
+
+    Args:
+        username: Student's username.
+
+    Returns:
+        Dict with:
+          - "subject":    str  — chosen subject for today
+          - "topic":      str  — chosen topic within that subject
+          - "reason":     str  — friendly explanation of why this was chosen
+          - "upgrade":    dict — gradual upgrade suggestion (may be "none")
+          - "strategy":   str  — always "B"
+    """
+    profile = student_db.get_or_create_student(username)
+    topic_mastery = student_db.get_topic_mastery(username)
+    stats = student_db.get_stats(username)
+
+    # Last session subject drives the variety penalty
+    last_session_subject: Optional[str] = profile.get("current_subject")
+
+    # Strategy B: choose today's focus
+    focus = adaptive_path.choose_todays_focus(
+        student_profile=profile,
+        topic_mastery=topic_mastery,
+        last_session_subject=last_session_subject,
+    )
+
+    # Gradual upgrade check
+    performance = adaptive_path.evaluate_performance(stats)
+    upgrade = personalization_engine.suggest_gradual_upgrade(
+        student_profile=profile,
+        topic_mastery=topic_mastery,
+        recent_accuracy_pct=performance.get("rolling_accuracy"),
+    )
+
+    # Persist the chosen subject so the next session can rotate away from it
+    student_db.update_student_field(username, "current_subject", focus["subject"])
+
+    # If a difficulty upgrade is suggested, apply it now
+    if upgrade["upgrade_type"] == "difficulty" and upgrade.get("new_difficulty"):
+        student_db.update_student_field(
+            username, "difficulty_level", upgrade["new_difficulty"]
+        )
+
+    return {
+        "subject": focus["subject"],
+        "topic": focus["topic"],
+        "reason": focus["reason"],
+        "upgrade": upgrade,
+        "strategy": "B",
+    }
+
+
 def determine_intent(student_input: str) -> str:
     """
     Classify the student's message intent.

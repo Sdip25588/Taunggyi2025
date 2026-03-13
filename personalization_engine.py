@@ -279,6 +279,97 @@ def calculate_pace(student_profile: dict, recent_performance: dict) -> dict:
     return {"pace": pace, "recommendation": recommendation}
 
 
+def suggest_gradual_upgrade(
+    student_profile: dict,
+    topic_mastery: dict,
+    recent_accuracy_pct: Optional[float] = None,
+) -> dict:
+    """
+    Suggest a gradual difficulty or grade-level upgrade for strong students.
+
+    Logic:
+    - If recent accuracy >= 80% AND current difficulty is not the highest:
+      → Recommend upgrading difficulty by one small step.
+    - If overall topic mastery >= MASTERY_ADVANCE_THRESHOLD AND grade < max:
+      → Recommend offering the next grade, introducing it gradually.
+    - Grade advancement takes priority over difficulty upgrade.
+
+    Args:
+        student_profile:      Full student profile dict.
+        topic_mastery:        Dict {topic: mastery_float (0–1)}.
+        recent_accuracy_pct:  Accuracy over last N items (0–100). None = insufficient data.
+
+    Returns:
+        Dict: {
+            upgrade_type: "difficulty" | "grade" | "none",
+            message:       str,
+            new_difficulty: str | None,   # set when upgrade_type == "difficulty"
+            suggested_grade: int | None,  # set when upgrade_type == "grade"
+            is_gradual:    bool,
+        }
+    """
+    from adaptive_path import DIFFICULTY_LEVELS  # local import to avoid circular dependency
+
+    current_difficulty = student_profile.get("difficulty_level", "Beginner")
+    current_grade = student_profile.get("grade_level", 1)
+    max_grade = max(GRADE_LEVELS)
+
+    diff_idx = (
+        DIFFICULTY_LEVELS.index(current_difficulty)
+        if current_difficulty in DIFFICULTY_LEVELS
+        else 0
+    )
+
+    overall_mastery = (
+        sum(topic_mastery.values()) / len(topic_mastery)
+        if topic_mastery
+        else 0.0
+    )
+
+    # ── Grade advancement (strongest signal) ────────────────────────────────
+    if overall_mastery >= MASTERY_ADVANCE_THRESHOLD and current_grade < max_grade:
+        next_grade = current_grade + 1
+        return {
+            "upgrade_type": "grade",
+            "message": (
+                f"🌟 Incredible work! You've mastered {overall_mastery * 100:.0f}% of "
+                f"Grade {current_grade} content! You're ready to start exploring "
+                f"Grade {next_grade}. We'll begin gently — a little preview to get you "
+                f"excited, no pressure at all. Ready for the adventure? 🚀"
+            ),
+            "new_difficulty": None,
+            "suggested_grade": next_grade,
+            "is_gradual": True,
+        }
+
+    # ── Difficulty upgrade within grade ─────────────────────────────────────
+    if (
+        recent_accuracy_pct is not None
+        and recent_accuracy_pct >= 80.0
+        and diff_idx < len(DIFFICULTY_LEVELS) - 1
+    ):
+        next_difficulty = DIFFICULTY_LEVELS[diff_idx + 1]
+        return {
+            "upgrade_type": "difficulty",
+            "message": (
+                f"🎉 You're doing amazingly well — {recent_accuracy_pct:.0f}% accuracy! "
+                f"I'm going to gently introduce **{next_difficulty}** level content "
+                f"to keep you nicely challenged. You've earned it! ✨"
+            ),
+            "new_difficulty": next_difficulty,
+            "suggested_grade": None,
+            "is_gradual": True,
+        }
+
+    return {
+        "upgrade_type": "none",
+        "message": "",
+        "new_difficulty": None,
+        "suggested_grade": None,
+        "is_gradual": False,
+    }
+
+
 def check_grade_advancement(student_profile: dict, topic_mastery: dict) -> dict:
     """
     Determine if a student is ready to advance to the next grade level.
