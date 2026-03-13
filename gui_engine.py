@@ -237,8 +237,8 @@ def _render_chat_tab(
         _render_voice_input_panel(username, grade, subject, current_topic, stats)
 
     # ── Chat input ───────────────────────────────────────────────────────────
-    # Check if a voice transcription is waiting
-    voice_text = st.session_state.pop("voice_input_text", None)
+    # Check if a voice transcription is waiting; only consume it once used
+    voice_text = st.session_state.get("voice_input_text")
 
     user_input = st.chat_input(
         "Reply here... (or use the voice recorder above)",
@@ -246,6 +246,10 @@ def _render_chat_tab(
     ) or voice_text
 
     if user_input:
+        # Clear consumed voice input to avoid replaying it on next rerun
+        if voice_text and user_input == voice_text:
+            del st.session_state["voice_input_text"]
+
         # Display student message
         with st.chat_message("user", avatar=AVATAR_STUDENT):
             st.markdown(user_input)

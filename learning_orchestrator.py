@@ -47,6 +47,9 @@ DOUBT_KEYWORDS = {
 _SHORT_REPLY_WORDS = {"ok", "okay", "fine", "good", "hi", "hello", "yes", "no",
                       "sure", "ready", "yeah", "yep", "nope", "alright", "k", "idk"}
 
+# Number of student exchanges before triggering the lesson wrap-up
+LESSON_EXCHANGE_THRESHOLD = 8
+
 
 def is_doubt_or_question(text: str) -> bool:
     """Return True if the student's message looks like a doubt or question."""
@@ -60,7 +63,7 @@ def is_short_unclear_reply(text: str) -> bool:
     """Return True if the reply is too short/vague to act on."""
     words = text.strip().lower().split()
     if len(words) <= 3:
-        return all(w in _SHORT_REPLY_WORDS for w in words) or len(words) <= 1
+        return all(w in _SHORT_REPLY_WORDS for w in words)
     return False
 
 
@@ -238,7 +241,7 @@ def process_professor_turn(
             1 for m in (session_history or [])
             if m.get("role") == "user"
         )
-        if lesson_count >= 8:
+        if lesson_count >= LESSON_EXCHANGE_THRESHOLD:
             result["next_conv_state"] = CONV_WRAPUP
 
         return result
@@ -368,9 +371,10 @@ def _handle_doubt_then_transition(
     else:
         focus = todays_focus
 
-    subject = focus.get("subject", "Phonics")
-    topic = focus.get("topic", "")
-    next_state = CONV_LESSON if todays_focus is not None else CONV_LESSON_PICK
+    subject = focus.get("subject", "Phonics")  # noqa: F841 — kept for clarity
+    topic = focus.get("topic", "")  # noqa: F841
+    # After answering the doubt, go straight to LESSON (focus is always set by now)
+    next_state = CONV_LESSON
 
     return {
         "message": answer,
@@ -383,6 +387,8 @@ def _handle_doubt_then_transition(
         "next_conv_state": next_state,
         "todays_focus": focus,
     }
+
+QUIZ_KEYWORDS = {"quiz", "test", "question", "practise", "practice", "try", "challenge"}
 REVIEW_KEYWORDS = {"review", "revise", "revision", "remind", "recap", "again", "redo"}
 LESSON_KEYWORDS = {"teach", "learn", "explain", "what is", "how do", "show me", "tell me"}
 VISUAL_KEYWORDS = {"chart", "diagram", "picture", "show", "alphabet", "phonics chart"}

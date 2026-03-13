@@ -374,9 +374,10 @@ def choose_todays_focus(student_profile: dict, mastery: dict) -> dict:
     current_idx = student_profile.get("current_lesson_index", 0)
     difficulty = student_profile.get("difficulty_level", "Beginner")
 
-    # Find weak topics (mastery < 60%)
+    # Find weak topics (mastery < 60%) — compute mastery value once per topic
+    topic_mastery_pairs = [(t, mastery.get(t, 0.5)) for t in topics]
     weak_topics = sorted(
-        [(t, mastery.get(t, 0.5)) for t in topics if mastery.get(t, 0.5) < 0.60],
+        [(t, m) for t, m in topic_mastery_pairs if m < 0.60],
         key=lambda x: x[1],
     )
 
@@ -386,8 +387,9 @@ def choose_todays_focus(student_profile: dict, mastery: dict) -> dict:
         candidate_subjects = [s for s in all_subjects if s != last_subject]
         alternate_subject = random.choice(candidate_subjects)
         alt_topics = SUBJECT_TOPICS.get(alternate_subject, PHONICS_TOPICS)
+        alt_mastery_pairs = [(t, mastery.get(t, 0.5)) for t in alt_topics]
         alt_weak = sorted(
-            [(t, mastery.get(t, 0.5)) for t in alt_topics if mastery.get(t, 0.5) < 0.60],
+            [(t, m) for t, m in alt_mastery_pairs if m < 0.60],
             key=lambda x: x[1],
         )
         if alt_weak:
