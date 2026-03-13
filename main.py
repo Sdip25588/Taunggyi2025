@@ -87,6 +87,10 @@ def _init_session_state() -> None:
         "rag_initialised": False,
         "show_visual": False,
         "suggested_visual": None,
+        # Professor / conversation mode state
+        "conv_state": "GREETING",
+        "greeting_done": False,
+        "todays_focus": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -200,6 +204,11 @@ def _render_login() -> None:
                 st.session_state.current_subject = profile.get(
                     "current_subject", "Phonics"
                 )
+                # Reset professor/conversation state for the new session
+                st.session_state.conv_state = "GREETING"
+                st.session_state.greeting_done = False
+                st.session_state.todays_focus = None
+                st.session_state.chat_history = []
                 st.rerun()
 
     # Feature highlights
