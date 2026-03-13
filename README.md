@@ -173,7 +173,39 @@ The app uses **`edge-tts`** by default (free, no key needed). Azure TTS is optio
 
 ---
 
-## 🗺️ Roadmap
+## 🧪 Manual QA Steps
+
+### Professor-Led Conversation Flow
+
+1. **Start the app:**
+   ```bash
+   streamlit run main.py
+   ```
+2. **Login:** Enter any name (e.g. `Aung`) and select Grade 1. Click **Start Learning!**
+3. **Greeting check:** The AI should immediately greet you with a *varied* message (e.g. "Good morning, Aung! How are you today?"). The greeting changes each session.
+4. **Check-in reply:** Type a short reply such as `I'm good!` — the AI should acknowledge your mood and then introduce today's topic.
+5. **Doubt handling:** Before the lesson begins, type a question like `What is a vowel?` — the AI should answer the question *first*, then smoothly transition into the lesson.
+6. **Professor-chosen lesson:** The AI should announce the topic (e.g. "Today we'll work on Short Vowels — here's why…"). The student does **not** choose the topic.
+7. **Variety check (multi-session):** Log out, log back in. The topic/subject chosen in the second session should differ from the first (Strategy B variety rotation).
+8. **Gradual upgrade:** Answer quiz questions correctly several times. The AI should note your progress and gradually increase difficulty or move to the next topic.
+9. **Warm style check:** If you answer incorrectly, the AI should say something like "Almost there — let's try together!" rather than a harsh negative.
+10. **TTS/emoji check:** Click **🔊 Read Aloud** on any AI message. Emojis should *not* be read aloud; the spoken text should be clean and natural.
+
+### Session-State Smoke Test
+
+After login, open the Streamlit debug panel (add `?debug=true` to the URL, or add `st.write(st.session_state)` temporarily) and verify these keys exist with correct initial values:
+
+| Key | Expected initial value |
+|-----|------------------------|
+| `conv_state` | `"GREETING"` (`CONV_GREETING`) |
+| `greeting_done` | `False` |
+| `todays_focus` | `None` |
+| `chat_history` | `[]` |
+| `current_subject` | `"Phonics"` (or student's saved subject) |
+
+---
+
+
 
 - [ ] 7 subjects (Math, Science, History, Geography, Myanmar, Art)
 - [ ] Multi-model routing (OpenAI GPT-4, Anthropic Claude)
