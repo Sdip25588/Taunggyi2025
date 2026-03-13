@@ -481,6 +481,7 @@ def _render_conversation_prompt_card(
     if subject_switch and subject_switch != subject:
         st.session_state.current_subject = subject_switch
         student_db.update_student_field(username, "current_subject", subject_switch)
+        subject = subject_switch
 
     if new_state == ConversationState.LESSON and tutor_text:
         st.session_state.chat_history.append({
