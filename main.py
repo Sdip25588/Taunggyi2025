@@ -19,6 +19,7 @@ import streamlit as st
 
 from config import APP_CONFIG, GEMINI_API_KEY
 import ai_teacher
+import learning_orchestrator
 import student as student_db
 import gui_engine
 
@@ -88,7 +89,7 @@ def _init_session_state() -> None:
         "show_visual": False,
         "suggested_visual": None,
         # Professor / conversation mode state
-        "conv_state": "GREETING",
+        "conv_state": learning_orchestrator.CONV_GREETING,
         "greeting_done": False,
         "todays_focus": None,
     }
@@ -205,7 +206,7 @@ def _render_login() -> None:
                     "current_subject", "Phonics"
                 )
                 # Reset professor/conversation state for the new session
-                st.session_state.conv_state = "GREETING"
+                st.session_state.conv_state = learning_orchestrator.CONV_GREETING
                 st.session_state.greeting_done = False
                 st.session_state.todays_focus = None
                 st.session_state.chat_history = []

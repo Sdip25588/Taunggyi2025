@@ -303,7 +303,11 @@ def _do_lesson_pick(
 
     Returns a response dict with LESSON state and todays_focus populated.
     """
-    focus = adaptive_path.choose_todays_focus(profile, topic_mastery)
+    focus = adaptive_path.choose_todays_focus(
+        student_profile=profile,
+        topic_mastery=topic_mastery,
+        last_session_subject=profile.get("last_session_subject"),
+    )
     subject = focus["subject"]
     topic = focus["topic"]
     reason = focus["reason"]
@@ -365,7 +369,11 @@ def _handle_doubt_then_transition(
     # If no focus yet, pick one now
     if todays_focus is None:
         profile = student_db.get_or_create_student(username)
-        focus = adaptive_path.choose_todays_focus(profile, topic_mastery)
+        focus = adaptive_path.choose_todays_focus(
+            student_profile=profile,
+            topic_mastery=topic_mastery,
+            last_session_subject=profile.get("last_session_subject"),
+        )
         student_db.update_student_field(username, "last_session_subject", focus["subject"])
         student_db.update_student_field(username, "current_subject", focus["subject"])
     else:
