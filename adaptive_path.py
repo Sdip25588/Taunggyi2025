@@ -350,6 +350,87 @@ def get_next_lesson_recommendation(student_profile: dict, topic_mastery: dict) -
     }
 
 
+def choose_todays_focus(student_profile: dict, mastery: dict) -> dict:
+    """
+    Professor mode: choose today's lesson focus based on student profile and mastery.
+
+    Decision logic:
+    1. If there are weak topics (mastery < 60%), prioritise the weakest one.
+    2. Prefer variety: avoid repeating the same subject as the last session.
+    3. If no weak topics exist, advance to the next topic in the current subject.
+
+    Args:
+        student_profile: Full student profile dict from student.py.
+        mastery: Dict {topic: mastery_float} from student DB / personalization_engine.
+
+    Returns:
+        Dict with: subject, topic, reason.
+    """
+    import random
+
+    subject = student_profile.get("current_subject", "Phonics")
+    last_subject = student_profile.get("last_session_subject", "")
+    topics = SUBJECT_TOPICS.get(subject, PHONICS_TOPICS)
+    current_idx = student_profile.get("current_lesson_index", 0)
+    difficulty = student_profile.get("difficulty_level", "Beginner")
+
+    # Find weak topics (mastery < 60%) — compute mastery value once per topic
+    topic_mastery_pairs = [(t, mastery.get(t, 0.5)) for t in topics]
+    weak_topics = sorted(
+        [(t, m) for t, m in topic_mastery_pairs if m < 0.60],
+        key=lambda x: x[1],
+    )
+
+    # Try to avoid repeating the same subject two sessions in a row by rotating
+    all_subjects = list(SUBJECT_TOPICS.keys())
+    if last_subject == subject and len(all_subjects) > 1:
+        candidate_subjects = [s for s in all_subjects if s != last_subject]
+        alternate_subject = random.choice(candidate_subjects)
+        alt_topics = SUBJECT_TOPICS.get(alternate_subject, PHONICS_TOPICS)
+        alt_mastery_pairs = [(t, mastery.get(t, 0.5)) for t in alt_topics]
+        alt_weak = sorted(
+            [(t, m) for t, m in alt_mastery_pairs if m < 0.60],
+            key=lambda x: x[1],
+        )
+        if alt_weak:
+            alt_topic, alt_score = alt_weak[0]
+            return {
+                "subject": alternate_subject,
+                "topic": alt_topic,
+                "reason": (
+                    f"You did {subject} last time, so today we'll switch to "
+                    f"{alternate_subject} and work on **{alt_topic}** — "
+                    f"a great area to strengthen right now!"
+                ),
+            }
+
+    # Prioritise weak topics in current subject
+    if weak_topics:
+        topic, score = weak_topics[0]
+        mastery_pct = round(score * 100)
+        return {
+            "subject": subject,
+            "topic": topic,
+            "reason": (
+                f"I can see that **{topic}** still has some room to grow "
+                f"({mastery_pct}% mastery). Focusing on this today will really "
+                f"help you read and write more confidently!"
+            ),
+        }
+
+    # All topics strong → advance
+    next_idx = min(current_idx + 1, len(topics) - 1)
+    next_topic = topics[next_idx]
+    return {
+        "subject": subject,
+        "topic": next_topic,
+        "reason": (
+            f"You're doing great with your current topics! "
+            f"Today we'll move forward to **{next_topic}** — you're ready for it!"
+        ),
+    }
+
+
 def should_skip_content(student_profile: dict, topic: str) -> tuple[bool, str]:
     """
     Determine if a topic should be skipped (already mastered).

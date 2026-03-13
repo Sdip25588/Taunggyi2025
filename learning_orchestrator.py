@@ -25,8 +25,369 @@ logger = logging.getLogger(__name__)
 _DEFAULT_WRITING_SCORE = 0.7
 
 # ─────────────────────────────────────────────
-# Intent detection keywords
+# Conversation state machine states
 # ─────────────────────────────────────────────
+
+CONV_GREETING = "GREETING"
+CONV_CHECKIN = "CHECKIN"
+CONV_DOUBTS = "DOUBTS"
+CONV_LESSON_PICK = "LESSON_PICK"
+CONV_LESSON = "LESSON"
+CONV_WRAPUP = "WRAPUP"
+
+# Keywords that suggest a student is asking a question/doubt (not just chatting)
+DOUBT_KEYWORDS = {
+    "what is", "what are", "what does", "what do", "how do", "how does",
+    "why", "when do", "where", "which", "can you explain", "i don't understand",
+    "i dont understand", "confused", "what's", "whats", "help me understand",
+    "what about", "tell me about", "explain", "meaning of", "define",
+}
+
+# Short reply patterns that indicate the student didn't fully respond (for follow-up)
+_SHORT_REPLY_WORDS = {"ok", "okay", "fine", "good", "hi", "hello", "yes", "no",
+                      "sure", "ready", "yeah", "yep", "nope", "alright", "k", "idk"}
+
+# Number of student exchanges before triggering the lesson wrap-up
+LESSON_EXCHANGE_THRESHOLD = 8
+
+
+def is_doubt_or_question(text: str) -> bool:
+    """Return True if the student's message looks like a doubt or question."""
+    lower = text.strip().lower()
+    if lower.endswith("?"):
+        return True
+    return any(lower.startswith(kw) or f" {kw}" in lower for kw in DOUBT_KEYWORDS)
+
+
+def is_short_unclear_reply(text: str) -> bool:
+    """Return True if the reply is too short/vague to act on."""
+    words = text.strip().lower().split()
+    if len(words) <= 3:
+        return all(w in _SHORT_REPLY_WORDS for w in words)
+    return False
+
+
+def get_initial_greeting(username: str) -> dict:
+    """
+    Generate the professor's first greeting for a new session.
+
+    Returns a response dict with the greeting message and conversation state.
+    """
+    greeting_text = human_engine.get_varied_greeting(username)
+    return {
+        "message": greeting_text,
+        "intent": "greeting",
+        "quiz_questions": None,
+        "visual_type": None,
+        "mistake_info": None,
+        "performance": {},
+        "next_topic": None,
+        "next_conv_state": CONV_CHECKIN,
+    }
+
+
+def process_professor_turn(
+    student_input: str,
+    username: str,
+    grade: int,
+    conv_state: str,
+    todays_focus: Optional[dict],
+    pending_quiz: Optional[dict] = None,
+    session_history: Optional[list] = None,
+) -> dict:
+    """
+    Professor-mode conversation state machine.
+
+    Handles the full conversation loop:
+    CHECKIN → DOUBTS (if question) / LESSON_PICK → LESSON → WRAPUP
+
+    Args:
+        student_input: Text from the student.
+        username: Student's username.
+        grade: Grade level.
+        conv_state: Current conversation state string.
+        todays_focus: Dict {subject, topic, reason} chosen by the professor.
+        pending_quiz: If a quiz question awaits an answer.
+        session_history: List of previous messages.
+
+    Returns:
+        Response dict with: message, intent, next_conv_state, quiz_questions,
+        visual_type, mistake_info, performance, next_topic, personalization,
+        grade_advancement, todays_focus.
+    """
+    profile = student_db.get_or_create_student(username)
+    stats = student_db.get_stats(username)
+    mistake_history = student_db.get_mistake_history(username)
+    topic_mastery = student_db.get_topic_mastery(username)
+
+    # If a quiz is pending and student is answering it, handle directly
+    if pending_quiz and conv_state == CONV_LESSON:
+        intent = determine_intent(student_input)
+        if intent == "answer":
+            result = _handle_quiz_answer(
+                student_input=student_input,
+                username=username,
+                subject=todays_focus.get("subject", "Phonics") if todays_focus else "Phonics",
+                grade=grade,
+                pending_quiz=pending_quiz,
+                stats=stats,
+                mistake_history=mistake_history,
+                topic_mastery=topic_mastery,
+            )
+            result["next_conv_state"] = CONV_LESSON
+            result["todays_focus"] = todays_focus
+            return result
+
+    # ── CHECKIN state: student replied to the greeting ──────────────────────
+    if conv_state == CONV_CHECKIN:
+        # If student asks a question, route to DOUBTS first
+        if is_doubt_or_question(student_input):
+            return _handle_doubt_then_transition(
+                student_input=student_input,
+                username=username,
+                grade=grade,
+                stats=stats,
+                todays_focus=todays_focus,
+                topic_mastery=topic_mastery,
+            )
+
+        # Short/unclear reply → follow-up
+        if is_short_unclear_reply(student_input):
+            prompt = human_engine.build_checkin_followup_prompt(
+                name=username, grade=grade, student_response=student_input
+            )
+            reply = ai_teacher.call_llm(prompt, mode="explain")
+            return {
+                "message": reply,
+                "intent": "checkin_followup",
+                "quiz_questions": None,
+                "visual_type": None,
+                "mistake_info": None,
+                "performance": {},
+                "next_topic": None,
+                "next_conv_state": CONV_CHECKIN,
+                "todays_focus": todays_focus,
+            }
+
+        # Good response → move to LESSON_PICK
+        return _do_lesson_pick(
+            username=username,
+            grade=grade,
+            stats=stats,
+            profile=profile,
+            topic_mastery=topic_mastery,
+        )
+
+    # ── LESSON_PICK state ───────────────────────────────────────────────────
+    if conv_state == CONV_LESSON_PICK:
+        if is_doubt_or_question(student_input):
+            return _handle_doubt_then_transition(
+                student_input=student_input,
+                username=username,
+                grade=grade,
+                stats=stats,
+                todays_focus=todays_focus,
+                topic_mastery=topic_mastery,
+            )
+        return _do_lesson_pick(
+            username=username,
+            grade=grade,
+            stats=stats,
+            profile=profile,
+            topic_mastery=topic_mastery,
+        )
+
+    # ── LESSON state ─────────────────────────────────────────────────────────
+    if conv_state == CONV_LESSON:
+        if todays_focus is None:
+            # Safety fallback: if focus was lost, re-pick
+            return _do_lesson_pick(
+                username=username, grade=grade, stats=stats,
+                profile=profile, topic_mastery=topic_mastery,
+            )
+
+        subject = todays_focus.get("subject", "Phonics")
+        current_topic = todays_focus.get("topic", "")
+
+        # Student asks a doubt mid-lesson → answer then return to lesson
+        if is_doubt_or_question(student_input):
+            result = _handle_doubt_then_transition(
+                student_input=student_input,
+                username=username,
+                grade=grade,
+                stats=stats,
+                todays_focus=todays_focus,
+                topic_mastery=topic_mastery,
+            )
+            # After answering doubt, return to LESSON state
+            result["next_conv_state"] = CONV_LESSON
+            return result
+
+        # Normal lesson interaction (explain, quiz, review, etc.)
+        result = process_student_input(
+            student_input=student_input,
+            username=username,
+            subject=subject,
+            grade=grade,
+            current_topic=current_topic,
+            pending_quiz=pending_quiz,
+            session_history=session_history,
+        )
+        result["next_conv_state"] = CONV_LESSON
+        result["todays_focus"] = todays_focus
+
+        # Check for wrap-up signal (after enough lesson exchanges)
+        lesson_count = sum(
+            1 for m in (session_history or [])
+            if m.get("role") == "user"
+        )
+        if lesson_count >= LESSON_EXCHANGE_THRESHOLD:
+            result["next_conv_state"] = CONV_WRAPUP
+
+        return result
+
+    # ── WRAPUP state ─────────────────────────────────────────────────────────
+    if conv_state == CONV_WRAPUP:
+        subject = (todays_focus or {}).get("subject", "Phonics")
+        current_topic = (todays_focus or {}).get("topic", "today's lesson")
+        accuracy = stats.get("accuracy_pct", 0)
+        performance_summary = (
+            f"{accuracy:.0f}% accuracy across {stats.get('total_lessons', 1)} lesson(s) today"
+        )
+        prompt = human_engine.build_wrapup_prompt(
+            name=username,
+            grade=grade,
+            subject=subject,
+            topic=current_topic,
+            performance_summary=performance_summary,
+        )
+        reply = ai_teacher.call_llm(prompt, mode="explain")
+        return {
+            "message": reply,
+            "intent": "wrapup",
+            "quiz_questions": None,
+            "visual_type": None,
+            "mistake_info": None,
+            "performance": adaptive_path.evaluate_performance(stats),
+            "next_topic": None,
+            "next_conv_state": CONV_LESSON,  # Reset to LESSON for continued chat
+            "todays_focus": todays_focus,
+        }
+
+    # ── Fallback: treat as regular lesson input ───────────────────────────────
+    subject = (todays_focus or {}).get("subject", stats.get("current_subject", "Phonics"))
+    current_topic = (todays_focus or {}).get("topic", "")
+    result = process_student_input(
+        student_input=student_input,
+        username=username,
+        subject=subject,
+        grade=grade,
+        current_topic=current_topic,
+        pending_quiz=pending_quiz,
+        session_history=session_history,
+    )
+    result["next_conv_state"] = CONV_LESSON
+    result["todays_focus"] = todays_focus
+    return result
+
+
+def _do_lesson_pick(
+    username: str,
+    grade: int,
+    stats: dict,
+    profile: dict,
+    topic_mastery: dict,
+) -> dict:
+    """
+    Professor chooses today's focus and introduces it to the student.
+
+    Returns a response dict with LESSON state and todays_focus populated.
+    """
+    focus = adaptive_path.choose_todays_focus(profile, topic_mastery)
+    subject = focus["subject"]
+    topic = focus["topic"]
+    reason = focus["reason"]
+
+    # Save last session subject for variety tracking
+    student_db.update_student_field(username, "last_session_subject", subject)
+    student_db.update_student_field(username, "current_subject", subject)
+
+    intro_prompt = human_engine.build_professor_lesson_intro_prompt(
+        name=username,
+        grade=grade,
+        subject=subject,
+        topic=topic,
+        reason=reason,
+    )
+    intro_text = ai_teacher.call_llm(intro_prompt, mode="explain")
+
+    # Append warm-up question
+    warmup_prompt = human_engine.build_warmup_prompt(
+        name=username,
+        grade=grade,
+        subject=subject,
+        topic=topic,
+        difficulty=stats.get("difficulty_level", "Beginner"),
+    )
+    warmup_text = ai_teacher.call_llm(warmup_prompt, mode="explain")
+
+    combined = f"{intro_text}\n\n{warmup_text}"
+
+    return {
+        "message": combined,
+        "intent": "lesson_pick",
+        "quiz_questions": None,
+        "visual_type": _suggest_visual(subject, topic),
+        "mistake_info": None,
+        "performance": adaptive_path.evaluate_performance(stats),
+        "next_topic": None,
+        "next_conv_state": CONV_LESSON,
+        "todays_focus": focus,
+    }
+
+
+def _handle_doubt_then_transition(
+    student_input: str,
+    username: str,
+    grade: int,
+    stats: dict,
+    todays_focus: Optional[dict],
+    topic_mastery: dict,
+) -> dict:
+    """Answer the student's doubt/question, then transition back to the lesson."""
+    prompt = human_engine.build_doubt_handler_prompt(
+        name=username,
+        grade=grade,
+        question=student_input,
+    )
+    answer = ai_teacher.call_llm(prompt, mode="explain")
+
+    # If no focus yet, pick one now
+    if todays_focus is None:
+        profile = student_db.get_or_create_student(username)
+        focus = adaptive_path.choose_todays_focus(profile, topic_mastery)
+        student_db.update_student_field(username, "last_session_subject", focus["subject"])
+        student_db.update_student_field(username, "current_subject", focus["subject"])
+    else:
+        focus = todays_focus
+
+    subject = focus.get("subject", "Phonics")  # noqa: F841 — kept for clarity
+    topic = focus.get("topic", "")  # noqa: F841
+    # After answering the doubt, go straight to LESSON (focus is always set by now)
+    next_state = CONV_LESSON
+
+    return {
+        "message": answer,
+        "intent": "doubt",
+        "quiz_questions": None,
+        "visual_type": None,
+        "mistake_info": None,
+        "performance": adaptive_path.evaluate_performance(stats),
+        "next_topic": None,
+        "next_conv_state": next_state,
+        "todays_focus": focus,
+    }
+
 QUIZ_KEYWORDS = {"quiz", "test", "question", "practise", "practice", "try", "challenge"}
 REVIEW_KEYWORDS = {"review", "revise", "revision", "remind", "recap", "again", "redo"}
 LESSON_KEYWORDS = {"teach", "learn", "explain", "what is", "how do", "show me", "tell me"}
