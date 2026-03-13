@@ -92,6 +92,12 @@ def _init_session_state() -> None:
         "conv_state": learning_orchestrator.CONV_GREETING,
         "greeting_done": False,
         "todays_focus": None,
+        # Extended conversation mode state (PR #4 additions)
+        "conversation_mode": True,
+        "conversation_state": "GREETING",
+        "pending_tutor_prompt": "",
+        "awaiting_student_reply": False,
+        "conversation_greeted": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:

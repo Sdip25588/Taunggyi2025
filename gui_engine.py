@@ -16,6 +16,7 @@ import streamlit as st
 
 from config import APP_CONFIG, TTS_CONFIG
 import learning_orchestrator
+from learning_orchestrator import ConversationState, handle_student_utterance
 import visual_teacher
 import adaptive_path
 import student as student_db
@@ -117,6 +118,41 @@ def _render_sidebar() -> None:
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
+
+        st.divider()
+
+        # Conversation mode toggle
+        st.subheader("🗣️ Conversation Mode")
+        conv_mode = st.session_state.get("conversation_mode", True)
+        new_conv_mode = st.toggle(
+            "Voice Conversation",
+            value=conv_mode,
+            key="conv_mode_toggle",
+            help="Turn on for a natural voice-first tutoring experience",
+        )
+        if new_conv_mode != conv_mode:
+            st.session_state.conversation_mode = new_conv_mode
+            st.rerun()
+
+        if st.session_state.get("conversation_mode"):
+            conv_state = st.session_state.get("conversation_state", ConversationState.GREETING)
+            st.caption(f"💬 Stage: **{conv_state}**")
+            if st.button("🔁 Restart Conversation", use_container_width=True, key="restart_conv"):
+                greeting_response = learning_orchestrator.get_initial_greeting(
+                    st.session_state.student_profile.get("username", "Student")
+                )
+                greeting_text = greeting_response["message"]
+                st.session_state.chat_history = [{
+                    "role": "assistant",
+                    "content": greeting_text,
+                    "id": 0,
+                }]
+                st.session_state.conversation_state = ConversationState.GREETING
+                st.session_state.pending_tutor_prompt = greeting_text
+                st.session_state.awaiting_student_reply = True
+                st.session_state.greeting_done = False
+                st.session_state.conv_state = learning_orchestrator.CONV_GREETING
+                st.rerun()
 
 
 # ─────────────────────────────────────────────
@@ -326,6 +362,150 @@ def _render_chat_tab(
             st.rerun()
 
         st.rerun()
+
+
+def _render_conversation_prompt_card(
+    username: str,
+    grade: int,
+    subject: str,
+    current_topic: str,
+    stats: dict,
+) -> None:
+    """
+    Render the conversation mode card: shows the latest tutor prompt prominently,
+    a voice recorder, and a text fallback. Used when conversation_mode is on and
+    conversation_state is not yet in LESSON stage.
+    """
+    # ── Tutor prompt banner ──────────────────────────────────────────────────
+    pending_prompt = st.session_state.get("pending_tutor_prompt", "")
+    if pending_prompt:
+        st.markdown(
+            f"""
+            <div style="background:linear-gradient(135deg,#4A90D9,#6AAFE6);
+                        padding:20px 24px;border-radius:14px;
+                        color:white;font-size:1.15rem;margin-bottom:16px;">
+              🧑‍🏫 <strong>Tutor says:</strong><br><br>
+              {pending_prompt}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        _render_tts_button(pending_prompt, key="tts_conv_prompt")
+
+    st.markdown("---")
+    st.markdown("#### 🎤 Answer by speaking (or typing below):")
+
+    # ── Voice recorder ───────────────────────────────────────────────────────
+    voice_text = ""
+    try:
+        from audio_recorder_streamlit import audio_recorder
+        audio_bytes = audio_recorder(
+            text="Click to speak",
+            recording_color="#4A90D9",
+            neutral_color="#6B6B6B",
+            icon_name="microphone",
+            icon_size="2x",
+            key="conv_voice_recorder",
+        )
+        if audio_bytes:
+            st.audio(audio_bytes, format="audio/wav")
+            if st.button("📨 Use Voice Answer", key="conv_submit_voice"):
+                with st.spinner("Converting speech to text... 🎤"):
+                    from voice_engine import listen_to_student
+                    stt = listen_to_student(audio_bytes)
+                if stt["success"]:
+                    voice_text = stt["text"]
+                    st.success(f"✅ I heard: **\"{voice_text}\"**")
+                else:
+                    err = stt.get("error", "")
+                    if "not configured" in err.lower() or "not installed" in err.lower():
+                        st.info("🔤 Azure STT not configured — please type your answer below.")
+                    else:
+                        st.warning(f"Could not understand audio: {err}. Please type below.")
+    except ImportError:
+        st.info("🎤 Audio recorder not installed. Please type your answer below.")
+
+    # ── Text fallback ────────────────────────────────────────────────────────
+    col_input, col_send = st.columns([4, 1])
+    with col_input:
+        typed_input = st.text_input(
+            "Type your answer here:",
+            key="conv_text_input",
+            label_visibility="collapsed",
+            placeholder="Type your reply...",
+        )
+    with col_send:
+        send_clicked = st.button("Send ➤", key="conv_send_btn", use_container_width=True)
+
+    # ── Previous conversation history ────────────────────────────────────────
+    if st.session_state.chat_history:
+        with st.expander("📜 Conversation so far", expanded=False):
+            for msg in st.session_state.chat_history:
+                role = msg["role"]
+                avatar = AVATAR_TEACHER if role == "assistant" else AVATAR_STUDENT
+                with st.chat_message(role, avatar=avatar):
+                    st.markdown(msg["content"])
+
+    # ── Process student response ─────────────────────────────────────────────
+    student_reply = voice_text or (
+        typed_input.strip() if send_clicked and typed_input.strip() else ""
+    )
+    if not student_reply:
+        return
+
+    st.session_state.chat_history.append({
+        "role": "user",
+        "content": student_reply,
+        "id": len(st.session_state.chat_history),
+    })
+
+    current_state = st.session_state.get(
+        "conversation_state", ConversationState.GREETING
+    )
+
+    with st.spinner("Thinking... 🤔"):
+        conv_result = handle_student_utterance(
+            state=current_state,
+            utterance=student_reply,
+            username=username,
+            subject=subject,
+            grade=grade,
+            current_topic=current_topic,
+            session_history=st.session_state.chat_history,
+        )
+
+    new_state = conv_result["new_state"]
+    tutor_text = conv_result["tutor_text"]
+    subject_switch = conv_result.get("subject_switch")
+
+    if subject_switch and subject_switch != subject:
+        st.session_state.current_subject = subject_switch
+        student_db.update_student_field(username, "current_subject", subject_switch)
+
+    if new_state == ConversationState.LESSON and tutor_text:
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": tutor_text,
+            "id": len(st.session_state.chat_history),
+        })
+        st.session_state.conversation_state = ConversationState.LESSON
+        st.session_state.conv_state = learning_orchestrator.CONV_LESSON
+        st.session_state.pending_tutor_prompt = ""
+        st.session_state.awaiting_student_reply = False
+        st.rerun()
+        return
+
+    if tutor_text:
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": tutor_text,
+            "id": len(st.session_state.chat_history),
+        })
+        st.session_state.pending_tutor_prompt = tutor_text
+
+    st.session_state.conversation_state = new_state
+    st.session_state.awaiting_student_reply = True
+    st.rerun()
 
 
 def _render_quiz_tab(
