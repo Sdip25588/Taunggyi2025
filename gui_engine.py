@@ -213,8 +213,6 @@ def _render_chat_tab(
     stats: dict,
 ) -> None:
     """Render the professor-mode conversational chat interface."""
-    import voice_engine as ve
-
     conv_state = st.session_state.get("conv_state", "GREETING")
     greeting_done = st.session_state.get("greeting_done", False)
 
@@ -240,6 +238,9 @@ def _render_chat_tab(
         # Auto-play TTS for greeting
         _autoplay_tts(greeting_text)
 
+        st.session_state.conversation_state = ConversationState.GREETING
+        st.session_state.pending_tutor_prompt = greeting_text
+        st.session_state.awaiting_student_reply = True
         st.session_state.greeting_done = True
         st.session_state.conv_state = learning_orchestrator.CONV_CHECKIN
         st.rerun()
