@@ -185,6 +185,66 @@ The app uses **`edge-tts`** by default (free, no key needed). Azure TTS is optio
 
 ---
 
+## 🛠️ Troubleshooting
+
+### `zsh: command not found: code` on macOS
+
+This means the VS Code `code` command-line tool is not on your `PATH` yet. Fix it in three steps:
+
+#### Step 1 — Install the `code` shell command from VS Code
+
+1. Open **Visual Studio Code** (download it from <https://code.visualstudio.com/> if needed).
+2. Press **Cmd + Shift + P** to open the Command Palette.
+3. Type **Shell Command: Install 'code' command in PATH** and press **Enter**.
+4. VS Code will show: *"Shell command 'code' successfully installed in PATH."*
+
+#### Step 2 — Restart Terminal
+
+The change only takes effect in a **new** Terminal window. Quit Terminal completely and reopen it:
+
+```bash
+# Quit Terminal (Cmd + Q), then reopen it, then verify:
+which code
+code --version
+```
+
+You should see a path like `/usr/local/bin/code` and a version number such as `1.90.0`.
+
+#### Step 3 — If `code` is still not found after restarting
+
+Run the following commands to add VS Code to your `PATH` manually:
+
+```bash
+# Confirm the binary exists
+ls "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+
+# Add it to your shell profile permanently
+echo 'export PATH="$PATH:/Applications/Visual Studio Code.app/Contents/Resources/app/bin"' >> ~/.zshrc
+source ~/.zshrc
+
+# Verify
+which code
+code --version
+```
+
+#### Alternatives when `code` is not available
+
+If you still cannot use `code`, open files with one of these options instead:
+
+```bash
+# Open files in VS Code via macOS (works even without the PATH fix)
+open -a "Visual Studio Code" gui_engine.py learning_orchestrator.py main.py
+
+# Edit directly in Terminal with nano (no install required)
+nano gui_engine.py
+# Nano tips:
+#   Ctrl+W  — search (e.g. type <<<<<<< to jump to conflict markers)
+#   Ctrl+O  — save
+#   Ctrl+X  — exit
+```
+
+---
+
 ## 🤝 Contributing
 
 Pull requests are welcome! Please open an issue first to discuss major changes.
