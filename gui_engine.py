@@ -373,8 +373,8 @@ def _render_conversation_prompt_card(
 ) -> None:
     """
     Render the conversation mode card: shows the latest tutor prompt prominently,
-    a voice recorder, and a text fallback. Used when conversation_mode is on and
-    conversation_state is not yet in LESSON stage.
+    a voice recorder, and a text fallback. Used during professor-led conversation
+    flow when the student is not yet in the main LESSON stage.
     """
     # ── Tutor prompt banner ──────────────────────────────────────────────────
     pending_prompt = st.session_state.get("pending_tutor_prompt", "")
