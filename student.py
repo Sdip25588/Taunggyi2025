@@ -53,7 +53,9 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             hint_usage_count    INTEGER DEFAULT 0,
             sessions_log        TEXT    DEFAULT '[]',
             grade_advancement_history TEXT DEFAULT '[]',
-            pace_preference     TEXT    DEFAULT 'normal'
+            pace_preference     TEXT    DEFAULT 'normal',
+            interests           TEXT    DEFAULT '',
+            onboarding_done     INTEGER DEFAULT 0
         )
     """)
     conn.commit()
@@ -74,6 +76,8 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         "sessions_log":               "TEXT DEFAULT '[]'",
         "grade_advancement_history":  "TEXT DEFAULT '[]'",
         "pace_preference":            "TEXT DEFAULT 'normal'",
+        "interests":                  "TEXT DEFAULT ''",
+        "onboarding_done":            "INTEGER DEFAULT 0",
     }
     for col, definition in new_columns.items():
         if col not in existing:
@@ -314,6 +318,8 @@ def update_student_field(username: str, field: str, value) -> None:
         "current_lesson_index": "UPDATE students SET current_lesson_index = ? WHERE username = ?",
         "difficulty_level":     "UPDATE students SET difficulty_level = ? WHERE username = ?",
         "pace_preference":      "UPDATE students SET pace_preference = ? WHERE username = ?",
+        "interests":            "UPDATE students SET interests = ? WHERE username = ?",
+        "onboarding_done":      "UPDATE students SET onboarding_done = ? WHERE username = ?",
     }
 
     if field not in _FIELD_QUERIES:
