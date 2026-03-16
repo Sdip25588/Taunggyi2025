@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import matplotlib.pyplot as plt
 import streamlit as st
 
 from config import APP_CONFIG, TTS_CONFIG
@@ -228,7 +229,16 @@ def _render_chat_tab(
 
     # ── Trigger initial greeting (once per session) ──────────────────────────
     if not greeting_done:
-        greeting_response = learning_orchestrator.get_initial_greeting(username)
+        profile = st.session_state.student_profile or {}
+        is_new_student = not profile.get("onboarding_done", 0)
+
+        if is_new_student:
+            greeting_response = learning_orchestrator.get_onboarding_greeting(username)
+            next_state = learning_orchestrator.CONV_ONBOARD_INTEREST
+        else:
+            greeting_response = learning_orchestrator.get_initial_greeting(username)
+            next_state = learning_orchestrator.CONV_CHECKIN
+
         greeting_text = greeting_response["message"]
 
         # Add to chat history
@@ -241,7 +251,7 @@ def _render_chat_tab(
         _autoplay_tts(greeting_text)
 
         st.session_state.greeting_done = True
-        st.session_state.conv_state = learning_orchestrator.CONV_CHECKIN
+        st.session_state.conv_state = next_state
         st.rerun()
 
     # ── Chat history display ─────────────────────────────────────────────────
@@ -260,7 +270,9 @@ def _render_chat_tab(
 
     # ── "Speak now" prompt ───────────────────────────────────────────────────
     _current_state = st.session_state.get("conv_state", learning_orchestrator.CONV_CHECKIN)
-    if _current_state in (
+    if _current_state == learning_orchestrator.CONV_ONBOARD_INTEREST:
+        st.info("🌟 **Tell me what you love!** — type your interest below, or use the voice recorder.")
+    elif _current_state in (
         learning_orchestrator.CONV_CHECKIN,
         learning_orchestrator.CONV_LESSON_PICK,
     ):
@@ -347,6 +359,20 @@ def _render_chat_tab(
             # Show visual if suggested
             if response.get("visual_type"):
                 st.session_state.suggested_visual = response["visual_type"]
+
+            # Show onboarding interest visual (career pathway chart)
+            onboard_visual = response.get("onboard_visual")
+            if onboard_visual:
+                st.session_state.onboard_visual = onboard_visual
+                with st.expander("🎨 See your future career paths!", expanded=True):
+                    fig = visual_teacher.create_interest_visual(
+                        interest=onboard_visual["interest"],
+                        emoji=onboard_visual["emoji"],
+                        careers=onboard_visual["careers"],
+                        matched_keyword=onboard_visual["matched_keyword"],
+                    )
+                    st.pyplot(fig)
+                    plt.close(fig)
 
         # Add AI response to history
         st.session_state.chat_history.append({

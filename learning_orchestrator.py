@@ -34,6 +34,9 @@ CONV_DOUBTS = "DOUBTS"
 CONV_LESSON_PICK = "LESSON_PICK"
 CONV_LESSON = "LESSON"
 CONV_WRAPUP = "WRAPUP"
+# First-time onboarding states
+CONV_ONBOARD_INTRO = "ONBOARD_INTRO"
+CONV_ONBOARD_INTEREST = "ONBOARD_INTEREST"
 
 
 class ConversationState:
@@ -48,6 +51,8 @@ class ConversationState:
     INTENT = "INTENT"       # kept for API compatibility; folded into CHECKIN→LESSON transition
     LESSON = CONV_LESSON
     WRAPUP = CONV_WRAPUP
+    ONBOARD_INTRO = CONV_ONBOARD_INTRO
+    ONBOARD_INTEREST = CONV_ONBOARD_INTEREST
 
 
 # ─────────────────────────────────────────────
@@ -324,6 +329,182 @@ def get_initial_greeting(username: str) -> dict:
     }
 
 
+# ─────────────────────────────────────────────
+# First-time onboarding helpers
+# ─────────────────────────────────────────────
+
+AI_TEACHER_NAME = "Pixel"
+
+# Maps interest keywords to (career list, emoji, one-liner description)
+_INTEREST_CAREER_MAP = {
+    "drawing": (["Artist", "Game Designer", "Architect", "Animator"], "🎨",
+                "Drawing is how great artists, game designers, and architects bring ideas to life!"),
+    "art": (["Artist", "Illustrator", "Graphic Designer", "Animator"], "🖌️",
+            "Art lets you express anything — and turns into amazing careers in design and animation!"),
+    "sport": (["Athlete", "Coach", "Sports Journalist", "PE Teacher"], "⚽",
+              "Sports teach teamwork and discipline — skills every professional needs!"),
+    "sports": (["Athlete", "Coach", "Sports Journalist", "PE Teacher"], "⚽",
+               "Sports teach teamwork and discipline — skills every professional needs!"),
+    "football": (["Footballer", "Coach", "Sports Journalist"], "⚽",
+                 "Football players travel the world — and English helps them communicate everywhere!"),
+    "soccer": (["Footballer", "Coach", "Sports Manager"], "⚽",
+               "Soccer stars use English for interviews, team play, and global fame!"),
+    "game": (["Game Designer", "Programmer", "App Developer", "YouTuber"], "🎮",
+             "Video games are made by teams who use English to code, design, and share ideas!"),
+    "gaming": (["Game Designer", "Programmer", "App Developer", "Streamer"], "🎮",
+               "Every top gaming studio in the world uses English — it's the language of games!"),
+    "music": (["Musician", "Singer", "Music Producer", "DJ"], "🎵",
+              "Music crosses languages — and the biggest stars write and sing in English!"),
+    "sing": (["Singer", "Performer", "Music Producer"], "🎤",
+             "Singing in English opens stages around the world!"),
+    "dance": (["Dancer", "Choreographer", "Performer", "Dance Teacher"], "💃",
+              "Dance connects to music, performance, and storytelling — all tied to English!"),
+    "animal": (["Veterinarian", "Wildlife Biologist", "Zookeeper", "Marine Biologist"], "🐾",
+               "Animals are studied worldwide — vets and scientists use English to share discoveries!"),
+    "animals": (["Veterinarian", "Wildlife Biologist", "Zookeeper"], "🐾",
+                "Scientists who study animals publish their work in English!"),
+    "robot": (["Robotics Engineer", "AI Developer", "Programmer"], "🤖",
+              "Robots are programmed using English-based coding languages!"),
+    "coding": (["Programmer", "App Developer", "AI Engineer", "Game Developer"], "💻",
+               "Code is written in English — learning English makes you a better coder!"),
+    "science": (["Scientist", "Doctor", "Engineer", "Researcher"], "🔬",
+                "Scientists around the world publish in English — it's the language of discovery!"),
+    "space": (["Astronaut", "Astrophysicist", "NASA Engineer", "Space Scientist"], "🚀",
+              "Every astronaut and space scientist uses English to communicate!"),
+    "cooking": (["Chef", "Food Blogger", "Nutritionist", "Restaurant Owner"], "🍳",
+                "Top chefs learn English to read international recipes and run global restaurants!"),
+    "reading": (["Author", "Journalist", "Teacher", "Librarian"], "📚",
+                "Reading in English unlocks millions of books, stories, and ideas!"),
+    "story": (["Author", "Screenwriter", "Journalist", "Storyteller"], "📖",
+              "Stories come alive in English — the world's most-read books are in English!"),
+    "nature": (["Biologist", "Environmentalist", "Park Ranger", "Climate Scientist"], "🌿",
+               "Nature scientists share their findings in English to help protect our planet!"),
+    "travel": (["Travel Blogger", "Pilot", "Tour Guide", "Diplomat"], "✈️",
+               "English is spoken in almost every country — it's your passport to the world!"),
+    "math": (["Engineer", "Data Scientist", "Mathematician", "Programmer"], "🔢",
+             "Math + English = super-powered thinking for engineers and scientists!"),
+    "build": (["Engineer", "Architect", "Construction Manager"], "🏗️",
+              "Builders and architects use English for blueprints, teamwork, and global projects!"),
+    "fashion": (["Fashion Designer", "Stylist", "Photographer", "Brand Manager"], "👗",
+                "The global fashion world runs on English — designs, brands, and runways!"),
+    "doctor": (["Doctor", "Surgeon", "Nurse", "Medical Researcher"], "🩺",
+               "Doctors worldwide use English to read research and save lives!"),
+}
+
+
+def _map_interest_to_career(interest_text: str) -> tuple:
+    """
+    Map a free-text interest to a career list, emoji, and description.
+
+    Returns (careers: list[str], emoji: str, description: str, matched_keyword: str).
+    Defaults to a generic "anything!" response if no keyword matches.
+    """
+    lower = interest_text.lower()
+    for keyword, (careers, emoji, description) in _INTEREST_CAREER_MAP.items():
+        if keyword in lower:
+            return careers, emoji, description, keyword
+    # Generic fallback
+    return (
+        ["Teacher", "Engineer", "Doctor", "Artist", "Entrepreneur"],
+        "🌟",
+        "Whatever you love, English will help you share it with the whole world!",
+        "your interest",
+    )
+
+
+def get_onboarding_greeting(username: str) -> dict:
+    """
+    Generate the AI teacher's warm first-time onboarding introduction.
+
+    This is used instead of get_initial_greeting() for brand-new students.
+    The AI introduces itself by name, greets the student warmly, and asks
+    what they are interested in.
+
+    Returns a response dict with the greeting message and next state.
+    """
+    message = (
+        f"Hi {username}! 🎉 My name is **{AI_TEACHER_NAME}**, and I'm going to be your "
+        f"personal English teacher today! 🧑‍🏫✨\n\n"
+        f"We are going to have **so much fun** learning together — I promise!\n\n"
+        f"Before we start, I want to get to know you a little bit. 😊\n\n"
+        f"**What are you really interested in or excited about right now?** "
+        f"(It could be anything — drawing, football, games, animals, space... you choose!)"
+    )
+    return {
+        "message": message,
+        "intent": "onboard_intro",
+        "quiz_questions": None,
+        "visual_type": None,
+        "mistake_info": None,
+        "performance": {},
+        "next_topic": None,
+        "next_conv_state": CONV_ONBOARD_INTEREST,
+        "onboard_visual": None,
+    }
+
+
+def handle_onboard_interest(
+    username: str,
+    interest_text: str,
+    grade: int,
+) -> dict:
+    """
+    Handle the student's reply about their interests during onboarding.
+
+    Responds warmly, explains what that interest can lead to, shows a visual
+    hint, and bridges it to learning English.
+
+    Args:
+        username: Student's username.
+        interest_text: What the student said they are interested in.
+        grade: Grade level.
+
+    Returns:
+        Response dict with bridge message, career connections, and visual hint.
+    """
+    careers, emoji, description, matched = _map_interest_to_career(interest_text)
+    if len(careers) == 1:
+        career_str = careers[0]
+    elif len(careers) == 2:
+        career_str = f"{careers[0]} or {careers[1]}"
+    else:
+        career_str = ", ".join(careers[:-1]) + f", or {careers[-1]}"
+
+    message = (
+        f"Wow, {username}! I **love** that! {emoji}\n\n"
+        f"{description}\n\n"
+        f"If you keep exploring **{interest_text.strip()}**, you could one day become a "
+        f"**{career_str}**! How cool is that? 🚀\n\n"
+        f"---\n\n"
+        f"Now here's the exciting part — **English is going to help you get there!** 📖\n\n"
+        f"We'll use your love of **{matched}** to make **phonics, reading, and spelling** "
+        f"feel super fun and useful for your future. Ready to start? 😄\n\n"
+        f"Let's go! What would you like to begin with — **Phonics**, **Reading**, or **Spelling**?"
+    )
+
+    # Persist the student's interest
+    student_db.update_student_field(username, "interests", interest_text.strip())
+    student_db.update_student_field(username, "onboarding_done", 1)
+
+    return {
+        "message": message,
+        "intent": "onboard_interest",
+        "quiz_questions": None,
+        "visual_type": None,
+        "mistake_info": None,
+        "performance": {},
+        "next_topic": None,
+        "next_conv_state": CONV_CHECKIN,
+        "onboard_visual": {
+            "interest": interest_text.strip(),
+            "matched_keyword": matched,
+            "careers": careers,
+            "emoji": emoji,
+        },
+    }
+
+
+
 def process_professor_turn(
     student_input: str,
     username: str,
@@ -375,6 +556,14 @@ def process_professor_turn(
             result["next_conv_state"] = CONV_LESSON
             result["todays_focus"] = todays_focus
             return result
+
+    # ── ONBOARD_INTEREST state: student replied with their interest ────────────
+    if conv_state == CONV_ONBOARD_INTEREST:
+        return handle_onboard_interest(
+            username=username,
+            interest_text=student_input,
+            grade=grade,
+        )
 
     # ── CHECKIN state: student replied to the greeting ──────────────────────
     if conv_state == CONV_CHECKIN:

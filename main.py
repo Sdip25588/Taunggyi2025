@@ -98,6 +98,8 @@ def _init_session_state() -> None:
         "pending_tutor_prompt": "",
         "awaiting_student_reply": False,
         "conversation_greeted": False,
+        # Onboarding state
+        "onboard_visual": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
