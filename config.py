@@ -139,6 +139,12 @@ SUPPORTED_LANGUAGES: list = ["en"]
 DEFAULT_LANGUAGE: str = "en"
 
 # ─────────────────────────────────────────────
+# AI Teacher Identity
+# Change this one value to update the teacher's name everywhere.
+# ─────────────────────────────────────────────
+AI_TEACHER_NAME: str = "San"
+
+# ─────────────────────────────────────────────
 # Safety Settings for Gemini (education-safe)
 # ─────────────────────────────────────────────
 GEMINI_SAFETY_SETTINGS = [
