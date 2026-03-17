@@ -6,6 +6,7 @@ dashboard, visual aids, and TTS controls.
 """
 
 import asyncio
+import base64
 import os
 import tempfile
 import logging
@@ -134,6 +135,22 @@ def _render_sidebar() -> None:
         if new_conv_mode != conv_mode:
             st.session_state.conversation_mode = new_conv_mode
             st.rerun()
+
+        # Auto-play preference toggle (accessibility)
+        if st.session_state.get("conversation_mode"):
+            autoplay_pref = st.session_state.get("autoplay_tts", True)
+            new_autoplay = st.toggle(
+                "🔊 Auto-play AI voice",
+                value=autoplay_pref,
+                key="autoplay_toggle",
+                help=(
+                    "When on, the AI teacher's voice plays automatically. "
+                    "Turn off to use the manual 🔊 Read Aloud button instead."
+                ),
+            )
+            if new_autoplay != autoplay_pref:
+                st.session_state.autoplay_tts = new_autoplay
+                st.rerun()
 
         if st.session_state.get("conversation_mode"):
             conv_state = st.session_state.get("conversation_state", ConversationState.GREETING)
@@ -287,7 +304,13 @@ def _render_chat_tab(
 
             msg_text = response["message"]
             st.markdown(msg_text)
-            _render_tts_button(msg_text, key=f"tts_{len(st.session_state.chat_history)}")
+
+            # Auto-play AI teacher's response — respects accessibility preference
+            if (st.session_state.get("conversation_mode", True)
+                    and st.session_state.get("autoplay_tts", True)):
+                _auto_play_tts(msg_text)
+            else:
+                _render_tts_button(msg_text, key=f"tts_{len(st.session_state.chat_history)}")
 
             # Show performance tip if available
             perf = response.get("performance", {})
@@ -334,7 +357,8 @@ def _render_conversation_prompt_card(
 ) -> None:
     """
     Render the conversation mode card: shows the latest tutor prompt prominently,
-    a voice recorder, and a text fallback. Used when conversation_state != LESSON.
+    auto-plays TTS for the tutor, auto-processes voice input (no submit button),
+    and provides a text fallback. Used when conversation_state != LESSON.
     """
     # ── Tutor prompt banner ──
     pending_prompt = st.session_state.get("pending_tutor_prompt", "")
@@ -350,18 +374,27 @@ def _render_conversation_prompt_card(
             """,
             unsafe_allow_html=True,
         )
-        # Auto-play TTS for the tutor prompt
-        _render_tts_button(pending_prompt, key="tts_conv_prompt")
+        # Auto-play TTS — student hears AI teacher immediately (no button needed)
+        # Only auto-play once per new prompt to avoid looping on rerun
+        # Respects the user's auto-play accessibility preference
+        autoplay_enabled = st.session_state.get("autoplay_tts", True)
+        last_played = st.session_state.get("_last_autoplay_prompt", "")
+        if autoplay_enabled and pending_prompt != last_played:
+            _auto_play_tts(pending_prompt)
+            st.session_state["_last_autoplay_prompt"] = pending_prompt
+        else:
+            # Manual replay button (always available as fallback)
+            _render_tts_button(pending_prompt, key="tts_conv_prompt")
 
     st.markdown("---")
-    st.markdown("#### 🎤 Answer by speaking (or typing below):")
+    st.markdown("#### 🎤 Your turn — speak or type your answer:")
 
-    # ── Voice recorder ──
+    # ── Voice recorder — auto-processes audio as soon as it's captured ──
     voice_text = ""
     try:
         from audio_recorder_streamlit import audio_recorder
         audio_bytes = audio_recorder(
-            text="Click to speak",
+            text="🎙️ Tap to speak",
             recording_color="#4A90D9",
             neutral_color="#6B6B6B",
             icon_name="microphone",
@@ -369,20 +402,19 @@ def _render_conversation_prompt_card(
             key="conv_voice_recorder",
         )
         if audio_bytes:
-            st.audio(audio_bytes, format="audio/wav")
-            if st.button("📨 Use Voice Answer", key="conv_submit_voice"):
-                with st.spinner("Converting speech to text... 🎤"):
-                    from voice_engine import listen_to_student
-                    stt = listen_to_student(audio_bytes)
-                if stt["success"]:
-                    voice_text = stt["text"]
-                    st.success(f"✅ I heard: **\"{voice_text}\"**")
+            # Auto-process: no manual "Submit" button required
+            with st.spinner("🎤 Listening... converting your speech to text"):
+                from voice_engine import listen_to_student
+                stt = listen_to_student(audio_bytes)
+            if stt["success"]:
+                voice_text = stt["text"]
+                st.success(f"✅ I heard: **\"{voice_text}\"**")
+            else:
+                err = stt.get("error", "")
+                if "not configured" in err.lower() or "not installed" in err.lower():
+                    st.info("🔤 Voice-to-text not configured — please type your answer below.")
                 else:
-                    err = stt.get("error", "")
-                    if "not configured" in err.lower() or "not installed" in err.lower():
-                        st.info("🔤 Azure STT not configured — please type your answer below.")
-                    else:
-                        st.warning(f"Could not understand audio: {err}. Please type below.")
+                    st.warning(f"Could not understand audio: {err}. Please type below.")
     except ImportError:
         st.info("🎤 Audio recorder not installed. Please type your answer below.")
 
@@ -495,11 +527,13 @@ def _render_quiz_tab(
                 import mistake_analyzer as ma
                 history = student_db.get_mistake_history(username)
                 weak = ma.get_repeated_weak_areas(history)
+                indep_info = student_db.get_independence_info(username)
                 prompt = human_engine.build_quiz_prompt(
                     subject=subject, grade=grade,
                     topic=current_topic,
                     difficulty=stats.get("difficulty_level", "Beginner"),
                     rag_context=rag_ctx, weak_areas=weak, num_questions=3,
+                    independence_score=indep_info.get("independence_score", 0.5),
                 )
                 raw = ai_teacher.call_llm(prompt, mode="quiz")
                 questions = learning_orchestrator.parse_quiz_json(raw)
@@ -847,6 +881,28 @@ def _render_tts_button(text: str, key: str) -> None:
                 st.audio(f.read(), format="audio/mp3")
         else:
             st.warning("TTS not available. Check your configuration.")
+
+
+def _auto_play_tts(text: str) -> None:
+    """
+    Generate TTS audio and embed it with autoplay so the student hears
+    the AI teacher's response immediately — no button press required.
+    """
+    audio_path = _generate_tts(text)
+    if not audio_path:
+        return
+    try:
+        with open(audio_path, "rb") as f:
+            audio_data = f.read()
+        b64 = base64.b64encode(audio_data).decode()
+        st.markdown(
+            f'<audio autoplay style="display:none">'
+            f'<source src="data:audio/mp3;base64,{b64}" type="audio/mp3">'
+            f"</audio>",
+            unsafe_allow_html=True,
+        )
+    except Exception as exc:
+        logger.warning("_auto_play_tts: could not embed audio: %s", exc)
 
 
 def _generate_tts(text: str) -> Optional[str]:
