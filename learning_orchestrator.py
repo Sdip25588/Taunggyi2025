@@ -287,7 +287,7 @@ DOUBT_KEYWORDS = {
 }
 
 # Short reply patterns that indicate the student didn't fully respond (for follow-up)
-_SHORT_REPLY_WORDS = {"ok", "okay", "fine", "good", "hi", "hello", "yes", "no",
+_SHORT_REPLY_WORDS = {"ok", "okay", "fine", "good", "hi", "hello", "hey", "yes", "no",
                       "sure", "ready", "yeah", "yep", "nope", "alright", "k", "idk"}
 
 # Number of student exchanges before triggering the lesson wrap-up
