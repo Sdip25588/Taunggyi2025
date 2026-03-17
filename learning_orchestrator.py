@@ -300,6 +300,7 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
+GREETING_KEYWORDS = {"hi", "hello", "hey", "good morning", "good afternoon", "good evening"}
 
 
 def determine_intent(student_input: str) -> str:
@@ -331,6 +332,9 @@ def determine_intent(student_input: str) -> str:
 
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
+
+    if any(kw in text for kw in GREETING_KEYWORDS):
+        return "greeting"
 
     # Existing intents
     if any(kw in text for kw in QUIZ_KEYWORDS):
@@ -488,6 +492,10 @@ def process_student_input(
             student_input=student_input, username=username,
             subject=subject, grade=grade, stats=stats,
             independence_info=independence_info,
+        )
+    elif intent == "greeting":
+        result = _handle_greeting_request(
+            username=username, subject=subject, current_topic=current_topic, stats=stats,
         )
     else:
         # Default: lesson/explanation — with confusion-aware strategy
@@ -775,6 +783,28 @@ def _handle_review_request(
             mistake_history,
             stats.get("difficulty_level", "Beginner"),
         ),
+    }
+
+
+def _handle_greeting_request(
+    username: str,
+    subject: str,
+    current_topic: str,
+    stats: dict,
+) -> dict:
+    """Handle a simple greeting and guide the student back to learning."""
+    return {
+        "message": (
+            f"Hey {username}! 👋 Great to see you. "
+            f"Would you like to continue with **{subject} — {current_topic}**, "
+            "or try a quiz, review, or new lesson?"
+        ),
+        "intent": "greeting",
+        "quiz_questions": None,
+        "visual_type": None,
+        "mistake_info": None,
+        "performance": adaptive_path.evaluate_performance(stats),
+        "next_topic": None,
     }
 
 
