@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Optional
 
-from config import APP_CONFIG
+from config import APP_CONFIG, AI_TEACHER_NAME
 import ai_teacher
 import human_engine
 import student as student_db
@@ -332,8 +332,6 @@ def get_initial_greeting(username: str) -> dict:
 # ─────────────────────────────────────────────
 # First-time onboarding helpers
 # ─────────────────────────────────────────────
-
-AI_TEACHER_NAME = "Pixel"
 
 # Maps interest keywords to (career list, emoji, one-liner description)
 _INTEREST_CAREER_MAP = {
