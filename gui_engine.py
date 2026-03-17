@@ -136,21 +136,8 @@ def _render_sidebar() -> None:
             st.session_state.conversation_mode = new_conv_mode
             st.rerun()
 
-        # Auto-play preference toggle (accessibility)
-        if st.session_state.get("conversation_mode"):
-            autoplay_pref = st.session_state.get("autoplay_tts", True)
-            new_autoplay = st.toggle(
-                "🔊 Auto-play AI voice",
-                value=autoplay_pref,
-                key="autoplay_toggle",
-                help=(
-                    "When on, the AI teacher's voice plays automatically. "
-                    "Turn off to use the manual 🔊 Read Aloud button instead."
-                ),
-            )
-            if new_autoplay != autoplay_pref:
-                st.session_state.autoplay_tts = new_autoplay
-                st.rerun()
+        # Auto-play is always enabled — AI voice plays automatically
+        st.session_state.autoplay_tts = True
 
         if st.session_state.get("conversation_mode"):
             conv_state = st.session_state.get("conversation_state", ConversationState.GREETING)
@@ -237,9 +224,8 @@ def _render_chat_tab(
         _render_conversation_prompt_card(username, grade, subject, current_topic, stats)
         return  # Conversation card handles input; skip the regular chat below
 
-    # Voice input panel (collapsible) — always available as a fallback
-    with st.expander("🎤 Voice Input (speak your answer)", expanded=False):
-        _render_voice_input_panel(username, grade, subject, current_topic, stats)
+    # Voice input panel — always visible, hold-to-speak style
+    _render_voice_input_panel(username, grade, subject, current_topic, stats)
 
     # Chat history
     chat_container = st.container()
@@ -249,8 +235,7 @@ def _render_chat_tab(
             avatar = AVATAR_TEACHER if role == "assistant" else AVATAR_STUDENT
             with st.chat_message(role, avatar=avatar):
                 st.markdown(msg["content"])
-                if role == "assistant":
-                    _render_tts_button(msg["content"], key=f"tts_{msg.get('id', id(msg))}")
+                # No TTS button — AI responses autoplay when generated
 
     # Initial greeting if no history (non-conversation mode fallback)
     if not st.session_state.chat_history:
@@ -269,7 +254,7 @@ def _render_chat_tab(
         )
         with st.chat_message("assistant", avatar=AVATAR_TEACHER):
             st.markdown(greeting)
-            _render_tts_button(greeting, key="tts_greeting")
+            _auto_play_tts(greeting)
 
     # Chat input
     user_input = st.chat_input(
@@ -305,12 +290,8 @@ def _render_chat_tab(
             msg_text = response["message"]
             st.markdown(msg_text)
 
-            # Auto-play AI teacher's response — respects accessibility preference
-            if (st.session_state.get("conversation_mode", True)
-                    and st.session_state.get("autoplay_tts", True)):
-                _auto_play_tts(msg_text)
-            else:
-                _render_tts_button(msg_text, key=f"tts_{len(st.session_state.chat_history)}")
+            # Always auto-play AI teacher's response — no manual play button
+            _auto_play_tts(msg_text)
 
             # Show performance tip if available
             perf = response.get("performance", {})
@@ -376,15 +357,10 @@ def _render_conversation_prompt_card(
         )
         # Auto-play TTS — student hears AI teacher immediately (no button needed)
         # Only auto-play once per new prompt to avoid looping on rerun
-        # Respects the user's auto-play accessibility preference
-        autoplay_enabled = st.session_state.get("autoplay_tts", True)
         last_played = st.session_state.get("_last_autoplay_prompt", "")
-        if autoplay_enabled and pending_prompt != last_played:
+        if pending_prompt != last_played:
             _auto_play_tts(pending_prompt)
             st.session_state["_last_autoplay_prompt"] = pending_prompt
-        else:
-            # Manual replay button (always available as fallback)
-            _render_tts_button(pending_prompt, key="tts_conv_prompt")
 
     st.markdown("---")
     st.markdown("#### 🎤 Your turn — speak or type your answer:")
@@ -394,7 +370,7 @@ def _render_conversation_prompt_card(
     try:
         from audio_recorder_streamlit import audio_recorder
         audio_bytes = audio_recorder(
-            text="🎙️ Tap to speak",
+            text="🎤 Hold to Speak",
             recording_color="#4A90D9",
             neutral_color="#6B6B6B",
             icon_name="microphone",
@@ -797,47 +773,57 @@ def _render_voice_input_panel(
     stats: dict,
 ) -> None:
     """
-    Render the voice input UI for speech-to-text.
+    Render the always-visible "Hold to Speak" voice input for speech-to-text.
 
     Tries audio_recorder_streamlit first; falls back to file upload.
+    Audio is auto-processed on capture — no manual submit button.
     When Azure STT is not configured, gracefully shows text input only.
     """
     try:
         from audio_recorder_streamlit import audio_recorder
 
-        st.markdown("🎤 **Record your voice** and I'll convert it to text:")
+        st.markdown(
+            """
+            <div style="text-align:center;padding:8px 0 4px 0;">
+              <span style="font-size:1.1rem;font-weight:600;color:#4A90D9;">
+                🎤 Hold to Speak
+              </span><br>
+              <span style="font-size:0.85rem;color:#888;">
+                Press the button and speak — release when done
+              </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         audio_bytes = audio_recorder(
-            text="Click to record",
+            text="",
             recording_color="#4A90D9",
             neutral_color="#6B6B6B",
             icon_name="microphone",
-            icon_size="2x",
+            icon_size="3x",
             key="voice_recorder",
         )
 
         if audio_bytes:
-            st.audio(audio_bytes, format="audio/wav")
-            if st.button("📨 Submit Voice Answer", key="submit_voice"):
-                with st.spinner("Converting speech to text... 🎤"):
-                    from voice_engine import listen_to_student
-                    stt_result = listen_to_student(audio_bytes)
+            # Auto-process immediately — no submit button needed
+            with st.spinner("🎤 Processing your speech..."):
+                from voice_engine import listen_to_student
+                stt_result = listen_to_student(audio_bytes)
 
-                if stt_result["success"]:
-                    transcribed = stt_result["text"]
-                    st.success(f"✅ I heard: **\"{transcribed}\"**")
-                    # Inject into chat as if typed
-                    st.session_state.voice_input_text = transcribed
-                    st.info("Your voice has been converted! It will appear as your next message.")
+            if stt_result["success"]:
+                transcribed = stt_result["text"]
+                st.success(f"✅ I heard: **\"{transcribed}\"**")
+                st.session_state.voice_input_text = transcribed
+            else:
+                err = stt_result.get("error", "Unknown error")
+                if "not configured" in err.lower() or "not installed" in err.lower():
+                    st.info(
+                        "🔤 **Voice-to-text not available** — "
+                        "Azure Speech key not configured or SDK not installed. "
+                        "Please type your answer below instead."
+                    )
                 else:
-                    err = stt_result.get("error", "Unknown error")
-                    if "not configured" in err.lower() or "not installed" in err.lower():
-                        st.info(
-                            "🔤 **Voice-to-text not available** — "
-                            "Azure Speech key not configured or SDK not installed. "
-                            "Please type your answer below instead."
-                        )
-                    else:
-                        st.warning(f"Could not understand audio: {err}. Please try again or type your answer.")
+                    st.warning(f"Could not understand audio: {err}. Please try again or type your answer.")
 
     except ImportError:
         # audio_recorder_streamlit not installed — offer file upload
@@ -849,22 +835,17 @@ def _render_voice_input_panel(
         )
         if uploaded:
             audio_bytes = uploaded.read()
-            # Determine format safely
-            mime_type = uploaded.type or "audio/wav"
-            audio_format = mime_type.split("/")[1] if "/" in mime_type else "wav"
-            st.audio(audio_bytes, format=f"audio/{audio_format}")
-            if st.button("📨 Submit Audio", key="submit_audio"):
-                with st.spinner("Converting speech to text... 🎤"):
-                    from voice_engine import listen_to_student
-                    stt_result = listen_to_student(audio_bytes)
-                if stt_result["success"]:
-                    st.success(f"✅ I heard: **\"{stt_result['text']}\"**")
-                    st.session_state.voice_input_text = stt_result["text"]
-                else:
-                    st.info(
-                        "🔤 Voice recognition unavailable. "
-                        "Please type your answer in the chat below."
-                    )
+            with st.spinner("Converting speech to text... 🎤"):
+                from voice_engine import listen_to_student
+                stt_result = listen_to_student(audio_bytes)
+            if stt_result["success"]:
+                st.success(f"✅ I heard: **\"{stt_result['text']}\"**")
+                st.session_state.voice_input_text = stt_result["text"]
+            else:
+                st.info(
+                    "🔤 Voice recognition unavailable. "
+                    "Please type your answer in the chat below."
+                )
 
 
 # ─────────────────────────────────────────────
