@@ -300,6 +300,8 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
+GREETING_WORDS = {"hi", "hello", "hey"}
+GREETING_PHRASES = {"good morning", "good afternoon", "good evening"}
 
 
 def determine_intent(student_input: str) -> str:
@@ -312,6 +314,8 @@ def determine_intent(student_input: str) -> str:
                 "advance_grade", "hint".
     """
     text = student_input.lower()
+    tokenized_words = re.findall(r"\b[a-z']+\b", text)
+    words = set(tokenized_words)
 
     # New academic intents (check before generic ones)
     if any(kw in text for kw in READ_ALOUD_KEYWORDS):
@@ -332,6 +336,11 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
+    if words.intersection(GREETING_WORDS) or any(
+        re.search(rf"\b{re.escape(kw)}\b", text) for kw in GREETING_PHRASES
+    ):
+        return "greeting"
+
     # Existing intents
     if any(kw in text for kw in QUIZ_KEYWORDS):
         return "quiz"
@@ -346,8 +355,7 @@ def determine_intent(student_input: str) -> str:
         return "lesson"
 
     # If it's short (1-4 words), might be answering a quiz
-    words = student_input.strip().split()
-    if len(words) <= 4:
+    if len(tokenized_words) <= 4:
         return "answer"
 
     return "lesson"
@@ -489,6 +497,16 @@ def process_student_input(
             subject=subject, grade=grade, stats=stats,
             independence_info=independence_info,
         )
+    elif intent == "greeting":
+        result = {
+            "message": f"Hi {username}! 👋 What would you like to do today — lesson, quiz, or review?",
+            "intent": "greeting",
+            "quiz_questions": None,
+            "visual_type": None,
+            "mistake_info": None,
+            "performance": adaptive_path.evaluate_performance(stats),
+            "next_topic": None,
+        }
     else:
         # Default: lesson/explanation — with confusion-aware strategy
         result = _handle_lesson_request(
