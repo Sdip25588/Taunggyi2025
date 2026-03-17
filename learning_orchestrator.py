@@ -314,7 +314,8 @@ def determine_intent(student_input: str) -> str:
                 "advance_grade", "hint".
     """
     text = student_input.lower()
-    words = set(re.findall(r"\b[a-z']+\b", text))
+    tokenized_words = re.findall(r"\b[a-z']+\b", text)
+    words = set(tokenized_words)
 
     # New academic intents (check before generic ones)
     if any(kw in text for kw in READ_ALOUD_KEYWORDS):
@@ -335,7 +336,9 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
-    if words.intersection(GREETING_WORDS) or any(kw in text for kw in GREETING_PHRASES):
+    if words.intersection(GREETING_WORDS) or any(
+        re.search(rf"\b{re.escape(kw)}\b", text) for kw in GREETING_PHRASES
+    ):
         return "greeting"
 
     # Existing intents
@@ -352,7 +355,7 @@ def determine_intent(student_input: str) -> str:
         return "lesson"
 
     # If it's short (1-4 words), might be answering a quiz
-    if len(student_input.strip().split()) <= 4:
+    if len(tokenized_words) <= 4:
         return "answer"
 
     return "lesson"
