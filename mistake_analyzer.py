@@ -204,53 +204,69 @@ def _check_phonics_confusion(student: str, correct: str) -> Optional[dict]:
 
 
 def _check_silent_e(student: str, correct: str) -> Optional[str]:
-    """Detect missing or extra silent-e errors."""
+    """Detect missing or extra silent-e errors using Socratic guidance."""
     if correct.endswith("e") and not student.endswith("e"):
         if correct[:-1] == student:
             return (
-                f"Almost! You wrote '{student}' but the answer is '{correct}'. "
-                f"Don't forget the silent 'e' at the end! "
-                f"The silent 'e' makes the vowel say its name — "
-                f"like in 'hope' (the 'o' says its name 'oh'). ✨"
+                f"Almost! You wrote '{student}' — you're so close! 🌟 "
+                f"Think about the vowel sound in this word. "
+                f"Is it a short sound or a long sound? "
+                f"What letter could you add at the end to make the vowel say its name? 🤔"
             )
     if student.endswith("e") and not correct.endswith("e"):
         if student[:-1] == correct:
             return (
-                f"Good try! You wrote '{student}' but the answer is '{correct}'. "
-                f"This word doesn't have a silent 'e' — "
-                f"the vowel keeps its short sound. 📖"
+                f"Good try! You wrote '{student}' — nearly there! "
+                f"Say the word aloud slowly. Does the vowel sound short (like 'hop') "
+                f"or long (like 'hope')? Does it need a silent letter at the end? 📖"
             )
     return None
 
 
 def _build_explanation(student_answer: str, correct_answer: str, rule: str) -> str:
-    """Build an encouraging error explanation."""
+    """
+    Build a Socratic error explanation that guides the student toward
+    discovering the correct answer rather than revealing it immediately.
+    """
+    # Give the rule as a guiding clue, not the full answer
+    first_letter = correct_answer[0].upper() if correct_answer else "?"
     return (
-        f"Almost! 🌟 You wrote '{student_answer}' but the correct answer is "
-        f"'{correct_answer}'.\n\n"
-        f"💡 **Remember:** {rule}"
+        f"Great effort! 🌟 You wrote '{student_answer}' — let's think about it together.\n\n"
+        f"💡 **Clue:** {rule}\n\n"
+        f"The word starts with **{first_letter}**... can you work out the rest? "
+        f"Try sounding it out letter by letter. What do you think it is? 🤔"
     )
 
 
 def _build_spelling_explanation(
     student_answer: str, correct_answer: str, similarity: float
 ) -> str:
-    """Build a spelling-specific explanation with diff highlighting."""
-    diff = list(difflib.ndiff(student_answer.lower(), correct_answer.lower()))
-    changed = [c for c in diff if c.startswith("+ ") or c.startswith("- ")]
-
+    """
+    Build a Socratic spelling explanation that nudges the student to self-correct
+    rather than immediately showing the right answer.
+    """
     if similarity >= 0.8:
-        closeness = "You're very close!"
+        closeness = "You're really close!"
+        guidance = (
+            f"Look carefully at your spelling and the sounds you hear — "
+            f"which letter might be different? Try again! 🔍"
+        )
     elif similarity >= 0.5:
-        closeness = "Good try — you got some letters right!"
+        closeness = "Good try — you got several letters right!"
+        guidance = (
+            f"Say the word slowly out loud. What sounds do you hear? "
+            f"Can you match each sound to a letter? 🗣️"
+        )
     else:
-        closeness = "Keep practising — you'll get it!"
+        closeness = "Keep practising — every attempt makes you stronger!"
+        guidance = (
+            f"Let's start from the beginning. What's the first sound you hear in this word? "
+            f"Write down each sound as a letter. What do you get? 🌱"
+        )
 
     return (
-        f"Almost! 🌟 You wrote **'{student_answer}'** but the correct spelling is "
-        f"**'{correct_answer}'**. {closeness}\n\n"
-        f"💡 Look carefully at each letter and try sounding it out: "
-        f"{' '.join(correct_answer.upper())}"
+        f"Almost! 🌟 You wrote **'{student_answer}'** — {closeness}\n\n"
+        f"💡 {guidance}"
     )
 
 

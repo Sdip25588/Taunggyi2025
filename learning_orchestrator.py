@@ -238,11 +238,13 @@ def handle_student_utterance(
 
 
 def get_wrapup_message(username: str) -> str:
-    """Return a warm wrap-up message to end the session."""
+    """Return a warm wrap-up message that promotes reflection and independence."""
     return (
         f"You did an amazing job today, {username}! 🌟🎉 "
-        f"I'm really proud of your effort. "
-        f"Would you like to try one more thing, or shall we finish here?"
+        f"I'm really proud of your effort and independent thinking. "
+        f"Before we finish — **what did you figure out by yourself today?** "
+        f"(Take a moment to think! 🤔) "
+        f"Would you like to try one more challenge, or shall we finish here?"
     )
 
 
@@ -260,16 +262,25 @@ def _get_state_resume_prompt(
 
 
 def _quick_answer(utterance: str, subject: str, grade: int, current_topic: str) -> str:
-    """Generate a quick inline answer to a direct question using the LLM."""
+    """
+    Handle a quick inline question using Socratic guidance.
+
+    Instead of giving the full answer, guides the student to think for themselves
+    before offering a brief clarification.
+    """
     prompt = (
         f"A Grade {grade} student asked a question during a conversation: '{utterance}'. "
-        f"Give a short, clear, child-friendly answer (2-3 sentences max). "
-        f"Do not use bullet points. Keep it conversational."
+        f"IMPORTANT: Do NOT give the full answer immediately. "
+        f"First ask them one Socratic question to guide their thinking "
+        f"(e.g., 'What do you already know about this?', "
+        f"'Can you think of a similar word?'). "
+        f"Then, if they still need help, offer a brief 1-2 sentence child-friendly hint. "
+        f"Do not use bullet points. Keep it warm and conversational."
     )
     try:
         return ai_teacher.call_llm(prompt, mode="explain", subject=subject)
     except Exception:
-        return "That's a great question! Let's keep that in mind as we continue."
+        return "That's a great question! What do you already know about it? Let's think together! 🤔"
 
 # ─────────────────────────────────────────────
 # Intent detection keywords
@@ -390,6 +401,7 @@ def process_student_input(
     stats = student_db.get_stats(username)
     mistake_history = student_db.get_mistake_history(username)
     topic_mastery = student_db.get_topic_mastery(username)
+    independence_info = student_db.get_independence_info(username)
 
     # 2. Detect intent
     intent = determine_intent(student_input)
@@ -405,6 +417,7 @@ def process_student_input(
             stats=stats,
             mistake_history=mistake_history,
             topic_mastery=topic_mastery,
+            independence_info=independence_info,
         )
 
     # 3. Personalization check
@@ -436,6 +449,7 @@ def process_student_input(
             username=username, subject=subject, grade=grade,
             current_topic=current_topic, rag_context=rag_context,
             stats=stats, mistake_history=mistake_history,
+            independence_info=independence_info,
         )
     elif intent == "review":
         result = _handle_review_request(
@@ -473,6 +487,7 @@ def process_student_input(
         result = _handle_hint_request(
             student_input=student_input, username=username,
             subject=subject, grade=grade, stats=stats,
+            independence_info=independence_info,
         )
     else:
         # Default: lesson/explanation — with confusion-aware strategy
@@ -480,7 +495,7 @@ def process_student_input(
             student_input=student_input, username=username,
             subject=subject, grade=grade, current_topic=current_topic,
             rag_context=rag_context, stats=stats, mistake_history=mistake_history,
-            confusion_info=confusion_info,
+            confusion_info=confusion_info, independence_info=independence_info,
         )
 
     # 6. Attach personalization and grade advancement data
@@ -504,8 +519,12 @@ def _handle_lesson_request(
     stats: dict,
     mistake_history: list,
     confusion_info: Optional[dict] = None,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Handle a lesson explanation request, with confusion-adaptive strategy."""
+    """Handle a lesson explanation request, with confusion-adaptive and Socratic strategy."""
+    if independence_info is None:
+        independence_info = student_db.get_independence_info(username)
+
     # Apply confusion strategy if needed
     prompt_modifier = ""
     if confusion_info and confusion_info.get("is_confused"):
@@ -516,7 +535,7 @@ def _handle_lesson_request(
         prompt_modifier = strategy_data["prompt_modifier"]
         student_db.increment_confusion_count(username)
 
-    # Build prompt
+    # Build prompt — Socratic questioning first, not direct explanation
     task = student_input
     if prompt_modifier:
         task = f"{student_input}\n\nTEACHING STRATEGY: {prompt_modifier}"
@@ -530,6 +549,8 @@ def _handle_lesson_request(
         rag_context=rag_context,
         task=task,
         mode="explain",
+        independence_score=independence_info.get("independence_score", 0.5),
+        socratic_level=independence_info.get("socratic_level", 1),
     )
 
     # Call LLM
@@ -537,6 +558,9 @@ def _handle_lesson_request(
 
     # Increment lesson count
     student_db.increment_lesson(username)
+
+    # Track independence: a lesson request without a pending answer counts as seeking guidance
+    student_db.update_independence_score(username, solved_independently=False)
 
     # Check for badge
     _check_and_award_badges(username, stats)
@@ -568,8 +592,11 @@ def _handle_quiz_request(
     rag_context: str,
     stats: dict,
     mistake_history: list,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Generate quiz questions for the current topic."""
+    """Generate Socratic quiz questions for the current topic."""
+    if independence_info is None:
+        independence_info = student_db.get_independence_info(username)
     weak_areas = mistake_analyzer.get_repeated_weak_areas(mistake_history)
     prompt = human_engine.build_quiz_prompt(
         subject=subject,
@@ -579,6 +606,7 @@ def _handle_quiz_request(
         rag_context=rag_context,
         weak_areas=weak_areas,
         num_questions=3,
+        independence_score=independence_info.get("independence_score", 0.5),
     )
 
     raw_response = ai_teacher.call_llm(prompt, mode="quiz", subject=subject)
@@ -618,10 +646,17 @@ def _handle_quiz_answer(
     stats: dict,
     mistake_history: list,
     topic_mastery: Optional[dict] = None,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Check a student's answer to a pending quiz question."""
+    """
+    Check a student's answer to a pending quiz question.
+
+    Uses Socratic guidance: after a wrong answer, guides with a hint question
+    rather than revealing the correct answer immediately.
+    """
     correct_answer = pending_quiz.get("correct_answer", "")
     explanation = pending_quiz.get("explanation", "")
+    socratic_hint = pending_quiz.get("hint", "")
 
     # Analyse the answer
     analysis = mistake_analyzer.analyze_answer(
@@ -632,6 +667,9 @@ def _handle_quiz_answer(
 
     # Update student progress
     student_db.update_progress(username, {"correct": analysis["is_correct"]})
+
+    # Track independence: correct answers without hints indicate growing independence
+    student_db.update_independence_score(username, solved_independently=analysis["is_correct"])
 
     # Update topic mastery in personalization engine
     current_topic = pending_quiz.get("topic", subject)
@@ -651,7 +689,7 @@ def _handle_quiz_answer(
             "student_answer": student_input,
             "type": analysis["type"],
         })
-        # Get enhanced correction from LLM
+        # Use Socratic correction: guide with a question, not the full answer
         rag_context = ai_teacher.retrieve_context(
             f"{subject} {correct_answer} {analysis['related_rule']}", subject=subject
         )
@@ -982,17 +1020,36 @@ def _handle_hint_request(
     subject: str,
     grade: int,
     stats: dict,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Handle a student's request for a hint."""
-    student_db.increment_hint_usage(username)
+    """
+    Handle a student's request for a hint.
 
-    # Generate a generic hint based on current context
+    Uses Socratic questioning: guides the student toward discovering the answer
+    rather than providing it directly. Tracks hint usage to adjust independence score.
+    """
+    student_db.increment_hint_usage(username)
+    # Hint requests reduce independence score — student needed help
+    student_db.update_independence_score(username, solved_independently=False)
+
+    if independence_info is None:
+        independence_info = student_db.get_independence_info(username)
+
+    indep = independence_info.get("independence_score", 0.5)
+    socratic_lv = independence_info.get("socratic_level", 1)
+
+    # Socratic hint: guide toward the answer, not reveal it
     hint_prompt = (
-        f"A Grade {grade} student is learning {subject} and asked for a hint. "
+        f"A Grade {grade} student (independence score: {indep:.2f}, socratic level: {socratic_lv}) "
+        f"is learning {subject} and asked for a hint. "
         f"Their message: '{student_input}'. "
-        f"Give a gentle, encouraging hint without giving the full answer. "
-        f"Use the 'Let's think about it together' approach. "
-        f"One short hint only!"
+        f"IMPORTANT: Do NOT give the answer. Instead, ask ONE Socratic guiding question "
+        f"that helps them think it through themselves "
+        f"(e.g., 'What sound does the first letter make?', "
+        f"'Can you think of a word that rhymes with it?', "
+        f"'What do you already know about this?'). "
+        f"Keep it warm, encouraging, and one question only. "
+        f"End with 'I know you can figure it out! 💪'"
     )
 
     response_text = ai_teacher.call_llm(hint_prompt, mode="explain", subject=subject)
