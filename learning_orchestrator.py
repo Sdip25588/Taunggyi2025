@@ -300,7 +300,18 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
-GREETING_KEYWORDS = {"hi", "hello", "hey", "good morning", "good afternoon", "good evening"}
+SINGLE_WORD_GREETINGS = {"hello", "hey", "hi"}
+GREETING_PHRASES = {"good morning", "good afternoon", "good evening"}
+_SINGLE_WORD_GREETING_PATTERN = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(word) for word in sorted(SINGLE_WORD_GREETINGS))
+    + r")\b"
+)
+_GREETING_PHRASE_PATTERN = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(phrase) for phrase in sorted(GREETING_PHRASES))
+    + r")\b"
+)
 
 
 def determine_intent(student_input: str) -> str:
@@ -333,9 +344,6 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
-    if any(kw in text for kw in GREETING_KEYWORDS):
-        return "greeting"
-
     # Existing intents
     if any(kw in text for kw in QUIZ_KEYWORDS):
         return "quiz"
@@ -346,6 +354,9 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in VISUAL_KEYWORDS):
         return "visual"
 
+    if _contains_greeting(text):
+        return "greeting"
+
     if any(kw in text for kw in LESSON_KEYWORDS):
         return "lesson"
 
@@ -355,6 +366,22 @@ def determine_intent(student_input: str) -> str:
         return "answer"
 
     return "lesson"
+
+
+def _contains_greeting(text: str) -> bool:
+    """
+    Check if text contains a greeting word or phrase.
+
+    Args:
+        text: Lowercased input text to evaluate.
+
+    Returns:
+        True if a greeting is detected with word-boundary matching, else False.
+    """
+    return bool(
+        _SINGLE_WORD_GREETING_PATTERN.search(text)
+        or _GREETING_PHRASE_PATTERN.search(text)
+    )
 
 
 def process_student_input(
