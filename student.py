@@ -591,7 +591,7 @@ def update_independence_score(username: str, solved_independently: bool) -> floa
         delta = 0.05 if solved_independently else -0.03
         new_score = round(max(0.0, min(1.0, current + delta)), 4)
 
-        # Raise socratic_level when consistently independent (score > 0.75)
+        # Raise socratic_level when consistently independent (score >= 0.75)
         # Lower it when struggling (score < 0.30)
         current_level = row["socratic_level"] if row["socratic_level"] is not None else 1
         if new_score >= 0.75 and current_level < 5:

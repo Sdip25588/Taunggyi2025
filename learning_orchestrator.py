@@ -559,8 +559,14 @@ def _handle_lesson_request(
     # Increment lesson count
     student_db.increment_lesson(username)
 
-    # Track independence: a lesson request without a pending answer counts as seeking guidance
-    student_db.update_independence_score(username, solved_independently=False)
+    # Track independence: only penalise when the student asks for help mid-problem.
+    # Proactive lesson requests (no recent wrong answer) are exploratory, not dependency.
+    recent_wrongs = [m for m in mistake_history[-3:] if m.get("type") not in ("correct",)]
+    is_seeking_help = bool(recent_wrongs) or any(
+        w in student_input.lower()
+        for w in ("help", "don't understand", "confused", "stuck", "what is", "tell me", "give me")
+    )
+    student_db.update_independence_score(username, solved_independently=not is_seeking_help)
 
     # Check for badge
     _check_and_award_badges(username, stats)

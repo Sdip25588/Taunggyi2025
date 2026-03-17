@@ -136,6 +136,22 @@ def _render_sidebar() -> None:
             st.session_state.conversation_mode = new_conv_mode
             st.rerun()
 
+        # Auto-play preference toggle (accessibility)
+        if st.session_state.get("conversation_mode"):
+            autoplay_pref = st.session_state.get("autoplay_tts", True)
+            new_autoplay = st.toggle(
+                "🔊 Auto-play AI voice",
+                value=autoplay_pref,
+                key="autoplay_toggle",
+                help=(
+                    "When on, the AI teacher's voice plays automatically. "
+                    "Turn off to use the manual 🔊 Read Aloud button instead."
+                ),
+            )
+            if new_autoplay != autoplay_pref:
+                st.session_state.autoplay_tts = new_autoplay
+                st.rerun()
+
         if st.session_state.get("conversation_mode"):
             conv_state = st.session_state.get("conversation_state", ConversationState.GREETING)
             st.caption(f"💬 Stage: **{conv_state}**")
@@ -289,8 +305,9 @@ def _render_chat_tab(
             msg_text = response["message"]
             st.markdown(msg_text)
 
-            # Auto-play AI teacher's response (voice mode)
-            if st.session_state.get("conversation_mode", True):
+            # Auto-play AI teacher's response — respects accessibility preference
+            if (st.session_state.get("conversation_mode", True)
+                    and st.session_state.get("autoplay_tts", True)):
                 _auto_play_tts(msg_text)
             else:
                 _render_tts_button(msg_text, key=f"tts_{len(st.session_state.chat_history)}")
@@ -359,12 +376,14 @@ def _render_conversation_prompt_card(
         )
         # Auto-play TTS — student hears AI teacher immediately (no button needed)
         # Only auto-play once per new prompt to avoid looping on rerun
+        # Respects the user's auto-play accessibility preference
+        autoplay_enabled = st.session_state.get("autoplay_tts", True)
         last_played = st.session_state.get("_last_autoplay_prompt", "")
-        if pending_prompt != last_played:
+        if autoplay_enabled and pending_prompt != last_played:
             _auto_play_tts(pending_prompt)
             st.session_state["_last_autoplay_prompt"] = pending_prompt
         else:
-            # Manual replay option after first auto-play
+            # Manual replay button (always available as fallback)
             _render_tts_button(pending_prompt, key="tts_conv_prompt")
 
     st.markdown("---")

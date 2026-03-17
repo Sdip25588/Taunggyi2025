@@ -229,7 +229,7 @@ def _build_explanation(student_answer: str, correct_answer: str, rule: str) -> s
     discovering the correct answer rather than revealing it immediately.
     """
     # Give the rule as a guiding clue, not the full answer
-    first_letter = correct_answer[0].upper() if correct_answer else "?"
+    first_letter = correct_answer[0].upper() if correct_answer and len(correct_answer) > 0 else "?"
     return (
         f"Great effort! 🌟 You wrote '{student_answer}' — let's think about it together.\n\n"
         f"💡 **Clue:** {rule}\n\n"
