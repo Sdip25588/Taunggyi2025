@@ -145,7 +145,7 @@ def transcribe_audio_bytes(audio_bytes: bytes) -> str:
     Convenience wrapper: convert raw audio bytes to a transcription string.
 
     Returns the transcribed text, or an empty string on failure.
-    Suitable for use in the conversation loop without handling the full
+    Suitable for use inside the conversation loop without handling the full
     dict result from listen_to_student.
 
     Args:

@@ -19,7 +19,6 @@ import streamlit as st
 
 from config import APP_CONFIG, GEMINI_API_KEY
 import ai_teacher
-import learning_orchestrator
 import student as student_db
 import gui_engine
 
@@ -88,18 +87,12 @@ def _init_session_state() -> None:
         "rag_initialised": False,
         "show_visual": False,
         "suggested_visual": None,
-        # Professor / conversation mode state
-        "conv_state": learning_orchestrator.CONV_GREETING,
-        "greeting_done": False,
-        "todays_focus": None,
-        # Extended conversation mode state (PR #4 additions)
+        # Conversation mode state
         "conversation_mode": True,
         "conversation_state": "GREETING",
         "pending_tutor_prompt": "",
         "awaiting_student_reply": False,
         "conversation_greeted": False,
-        # Onboarding state
-        "onboard_visual": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -213,11 +206,20 @@ def _render_login() -> None:
                 st.session_state.current_subject = profile.get(
                     "current_subject", "Phonics"
                 )
-                # Reset professor/conversation state for the new session
-                st.session_state.conv_state = learning_orchestrator.CONV_GREETING
-                st.session_state.greeting_done = False
-                st.session_state.todays_focus = None
-                st.session_state.chat_history = []
+
+                # Initialise conversation mode for this new session
+                from learning_orchestrator import get_initial_greeting, ConversationState
+                greeting_text = get_initial_greeting(username.strip())
+                st.session_state.chat_history = [{
+                    "role": "assistant",
+                    "content": greeting_text,
+                    "id": 0,
+                }]
+                st.session_state.conversation_state = ConversationState.GREETING
+                st.session_state.awaiting_student_reply = True
+                st.session_state.pending_tutor_prompt = greeting_text
+                st.session_state.conversation_greeted = True
+
                 st.rerun()
 
     # Feature highlights
