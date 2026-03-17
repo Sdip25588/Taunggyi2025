@@ -52,7 +52,7 @@ _NEGATIVE_MOOD_WORDS = {
 }
 _POSITIVE_MOOD_WORDS = {
     "good", "great", "fine", "okay", "well", "happy", "wonderful", "amazing",
-    "fantastic", "excellent", "super", "brilliant", "ready", "excited",
+    "fantastic", "excellent", "super", "brilliant", "ready", "excited", "hi", "hello", "hey",
 }
 
 # Subject/intent selection keywords for the CHECKIN → INTENT transition
