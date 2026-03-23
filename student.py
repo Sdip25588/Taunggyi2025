@@ -57,7 +57,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             interests           TEXT    DEFAULT '',
             onboarding_done     INTEGER DEFAULT 0,
             independence_score  REAL    DEFAULT 0.5,
-            socratic_level      INTEGER DEFAULT 1
+            socratic_level      INTEGER DEFAULT 1,
+            last_session_subject TEXT    DEFAULT ''
         )
     """)
     conn.commit()
@@ -82,6 +83,7 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         "onboarding_done":            "INTEGER DEFAULT 0",
         "independence_score":         "REAL DEFAULT 0.5",
         "socratic_level":             "INTEGER DEFAULT 1",
+        "last_session_subject":       "TEXT DEFAULT ''",
     }
     for col, definition in new_columns.items():
         if col not in existing:
@@ -326,6 +328,7 @@ def update_student_field(username: str, field: str, value) -> None:
         "onboarding_done":      "UPDATE students SET onboarding_done = ? WHERE username = ?",
         "independence_score":   "UPDATE students SET independence_score = ? WHERE username = ?",
         "socratic_level":       "UPDATE students SET socratic_level = ? WHERE username = ?",
+        "last_session_subject": "UPDATE students SET last_session_subject = ? WHERE username = ?",
     }
 
     if field not in _FIELD_QUERIES:
