@@ -60,11 +60,15 @@ _PHONICS_WORDS = {"phonics", "sounds", "letters", "alphabet"}
 _READING_WORDS = {"reading", "read", "story", "text", "passage"}
 _SPELLING_WORDS = {"spelling", "spell", "words", "word"}
 _CONTINUE_WORDS = {"continue", "same", "last time", "where we left", "again", "that"}
+_GREETING_PATTERN = re.compile(
+    r"\b(hi|hello|hey)\b|\bgood (morning|afternoon|evening)\b",
+    re.IGNORECASE,
+)
 
 
 def get_initial_greeting(name: str) -> str:
     """Return the opening greeting message for a new session."""
-    return f"Hello {name}! How are you today? 😊"
+    return human_engine.get_varied_greeting(name)
 
 
 def _detect_mood(text: str) -> str:
@@ -311,7 +315,7 @@ def determine_intent(student_input: str) -> str:
                 "read_aloud", "vocabulary", "write", "pronunciation",
                 "advance_grade", "hint".
     """
-    text = student_input.lower()
+    text = student_input.strip().lower()
 
     # New academic intents (check before generic ones)
     if any(kw in text for kw in READ_ALOUD_KEYWORDS):
@@ -333,6 +337,11 @@ def determine_intent(student_input: str) -> str:
         return "hint"
 
     # Existing intents
+    # Keep greeting detection after explicit academic intents so requests such as
+    # "how do you say hello..." route to teaching handlers instead of small-talk.
+    if _GREETING_PATTERN.search(text):
+        return "greeting"
+
     if any(kw in text for kw in QUIZ_KEYWORDS):
         return "quiz"
 
@@ -489,6 +498,16 @@ def process_student_input(
             subject=subject, grade=grade, stats=stats,
             independence_info=independence_info,
         )
+    elif intent == "greeting":
+        result = {
+            "message": human_engine.get_varied_greeting(username),
+            "intent": "greeting",
+            "quiz_questions": None,
+            "visual_type": None,
+            "mistake_info": None,
+            "performance": performance,
+            "next_topic": None,
+        }
     else:
         # Default: lesson/explanation — with confusion-aware strategy
         result = _handle_lesson_request(
