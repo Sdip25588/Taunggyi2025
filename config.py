@@ -3,22 +3,76 @@ config.py — Configuration for the AI English Education Platform.
 
 Loads API keys from environment variables, defines model routing,
 PDF paths, TTS settings, RAG parameters, and app settings.
+
+Key-loading priority (most secure first):
+  1. Environment variables (export GEMINI_API_KEY=... in your shell or .env file)
+  2. config_secrets.json in the project root (beginner-friendly fallback — git-ignored)
+
+Never hardcode real API keys in this file or commit them to version control.
 """
 
+import json
+import logging
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
-# Load .env file if present
+# Load .env file if present (standard python-dotenv approach)
 load_dotenv()
 
+_logger = logging.getLogger(__name__)
+
 # ─────────────────────────────────────────────
-# API Keys (loaded from environment variables)
+# Secrets-file fallback
 # ─────────────────────────────────────────────
-GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY", "")
-AZURE_SPEECH_REGION: str = os.getenv("AZURE_SPEECH_REGION", "")
-TTS_PROVIDER: str = os.getenv("TTS_PROVIDER", "edge")  # "edge" (default, free) or "azure"
+
+def _load_secrets_file() -> dict:
+    """
+    Load API keys from config_secrets.json in the project root.
+
+    This file is listed in .gitignore and must never be committed.
+    It provides a beginner-friendly alternative to shell environment variables.
+    Returns an empty dict if the file is absent or cannot be parsed.
+    """
+    secrets_path = Path(__file__).parent / "config_secrets.json"
+    if not secrets_path.exists():
+        return {}
+    try:
+        with secrets_path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            _logger.warning("config_secrets.json must contain a JSON object — ignoring.")
+            return {}
+        return data
+    except (json.JSONDecodeError, OSError) as exc:
+        _logger.warning("Could not read config_secrets.json: %s", exc)
+        return {}
+
+
+def _get_key(name: str, secrets: dict, default: str = "") -> str:
+    """
+    Return the value for *name*, checking environment variables first,
+    then the secrets dict (loaded from config_secrets.json), then *default*.
+
+    Environment variables take priority even when their value is an empty string,
+    so an explicit `export FOO=` in the shell is respected and the secrets file
+    is not consulted.
+    """
+    if name in os.environ:
+        return os.environ[name]
+    return secrets.get(name, default)
+
+
+_SECRETS: dict = _load_secrets_file()
+
+# ─────────────────────────────────────────────
+# API Keys
+# ─────────────────────────────────────────────
+GEMINI_API_KEY: str = _get_key("GEMINI_API_KEY", _SECRETS)
+AZURE_SPEECH_KEY: str = _get_key("AZURE_SPEECH_KEY", _SECRETS)
+AZURE_SPEECH_REGION: str = _get_key("AZURE_SPEECH_REGION", _SECRETS)
+TTS_PROVIDER: str = _get_key("TTS_PROVIDER", _SECRETS, "edge")  # "edge" (default, free) or "azure"
 
 # ─────────────────────────────────────────────
 # Model Routing Config

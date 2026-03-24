@@ -150,12 +150,18 @@ def _init_rag() -> None:
 def _check_api_keys() -> None:
     """Display a warning banner if the Gemini API key is missing."""
     if not GEMINI_API_KEY:
-        st.warning(
-            "⚠️ **Gemini API key not configured.** "
-            "AI features will show error messages until you add your key.\n\n"
-            "**Setup:** Copy `.env.example` to `.env` and add your `GEMINI_API_KEY`.\n\n"
-            "Get a free key at: https://aistudio.google.com/app/apikey",
-            icon="🔑",
+        st.error(
+            "🔑 **Gemini API key not configured.** AI features will not work until "
+            "you provide your key using **one** of these methods:\n\n"
+            "**Option A — Environment variable (recommended):**\n"
+            "```\nexport GEMINI_API_KEY=your_key_here\n```\n"
+            "Add that line to `~/.zshrc` (Mac/Linux) or set it in Windows "
+            "Environment Variables so it persists across sessions.\n\n"
+            "**Option B — Config file (beginner-friendly):**\n"
+            "Copy `config_secrets.json.example` to `config_secrets.json` in the "
+            "project root and fill in your key. "
+            "This file is git-ignored and never committed.\n\n"
+            "Get a free Gemini key at: https://aistudio.google.com/app/apikey",
         )
 
 

@@ -93,7 +93,11 @@ cd Taunggyi2025
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
+### 3. Configure API Keys
+
+The app loads API keys using the following priority order — choose whichever method is easiest for you:
+
+#### Option A — Environment variable / `.env` file (recommended)
 
 ```bash
 cp .env.example .env
@@ -104,6 +108,42 @@ Edit `.env` and add your API keys:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
+
+Alternatively, export the key directly in your shell so it persists every time:
+
+**Mac / Linux (add to `~/.zshrc` or `~/.bashrc`):**
+```bash
+export GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+**Windows — System Environment Variables:**
+1. Search *"Environment Variables"* in the Start Menu.
+2. Click **Environment Variables…** → **New…** under *User variables*.
+3. Name: `GEMINI_API_KEY`, Value: your key. Click OK.
+
+#### Option B — `config_secrets.json` (beginner-friendly, no shell setup)
+
+If you find shell environment variables confusing, use this alternative:
+
+1. Copy the example file:
+   ```bash
+   cp config_secrets.json.example config_secrets.json
+   ```
+2. Open `config_secrets.json` and replace the placeholder values with your real keys:
+   ```json
+   {
+     "GEMINI_API_KEY": "AIza...",
+     "AZURE_SPEECH_KEY": "your_azure_key_here",
+     "AZURE_SPEECH_REGION": "eastus",
+     "TTS_PROVIDER": "edge"
+   }
+   ```
+3. **`config_secrets.json` is listed in `.gitignore`** — it will never be committed to version control.
+
+> ⚠️ **Security reminders:**
+> - Never paste your real API key directly into `config.py` or any other source file.
+> - Never commit `config_secrets.json` (or `.env`) to Git — both are git-ignored.
+> - If you accidentally expose a key, revoke it immediately at the provider's console.
 
 ### 4. Add Curriculum PDFs
 
@@ -130,7 +170,7 @@ Open your browser to `http://localhost:8501` 🎉
 
 1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
 2. Click **"Create API Key"**
-3. Copy the key into your `.env` file as `GEMINI_API_KEY`
+3. Copy the key into your `.env` file **or** `config_secrets.json` (see [Configure API Keys](#3-configure-api-keys) above)
 4. **Free tier available** — no credit card needed
 
 ### Azure TTS (Optional — for premium voice quality)
