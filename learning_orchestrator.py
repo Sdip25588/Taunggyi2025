@@ -300,6 +300,9 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
+GREETING_KEYWORDS = {
+    "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+}
 
 
 def determine_intent(student_input: str) -> str:
@@ -331,6 +334,9 @@ def determine_intent(student_input: str) -> str:
 
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
+
+    if any(re.search(rf"\b{re.escape(kw)}\b", text) for kw in GREETING_KEYWORDS):
+        return "greeting"
 
     # Existing intents
     if any(kw in text for kw in QUIZ_KEYWORDS):
