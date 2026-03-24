@@ -64,7 +64,7 @@ _CONTINUE_WORDS = {"continue", "same", "last time", "where we left", "again", "t
 
 def get_initial_greeting(name: str) -> str:
     """Return the opening greeting message for a new session."""
-    return f"Hello {name}! How are you today? 😊"
+    return f"Hey {name}! How are you today? 😊"
 
 
 def _detect_mood(text: str) -> str:
