@@ -303,10 +303,12 @@ HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
 GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
 
 
-def _contains_keyword(text: str, keyword: str) -> bool:
-    """Return True if keyword appears as a standalone word/phrase in text."""
-    pattern = rf"(^|[^a-z0-9]){re.escape(keyword)}([^a-z0-9]|$)"
-    return re.search(pattern, text) is not None
+_GREETING_PATTERNS = tuple(re.compile(rf"\b{re.escape(keyword)}\b") for keyword in GREETING_KEYWORDS)
+
+
+def _contains_greeting(text: str) -> bool:
+    """Return True if text contains a standalone greeting keyword/phrase."""
+    return any(pattern.search(text) for pattern in _GREETING_PATTERNS)
 
 
 def determine_intent(student_input: str) -> str:
@@ -339,7 +341,7 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
-    if any(_contains_keyword(text, kw) for kw in GREETING_KEYWORDS):
+    if _contains_greeting(text):
         return "greeting"
 
     # Existing intents
