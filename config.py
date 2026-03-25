@@ -169,7 +169,7 @@ TTS_PROVIDER: str = _get_key("TTS_PROVIDER", _SECRETS, "edge")  # "edge" (defaul
 # a clear error message telling you to switch to a supported model.
 # ─────────────────────────────────────────────
 GEMINI_MODEL: str = _get_key("GEMINI_MODEL", _SECRETS, "gemini-2.0-flash")
-        0c6d022e7134bec17a2c67def8a102d954001fc4
+>>>>>>  0c6d022e7134bec17a2c67def8a102d954001fc4
 
 # ─────────────────────────────────────────────
 # Model Routing Config
