@@ -349,3 +349,252 @@ def _placeholder_fig(message: str) -> plt.Figure:
             fontsize=13, color=COLORS["text"], style="italic",
             transform=ax.transAxes)
     return fig
+
+
+# ─────────────────────────────────────────────
+# Learning Analytics Visualizations
+# ─────────────────────────────────────────────
+
+def generate_topic_mastery_chart(mastery_data: dict, subject: str = "") -> plt.Figure:
+    """
+    Horizontal bar chart of topic mastery percentages, color-coded green/yellow/red.
+
+    Args:
+        mastery_data: {topic_name: mastery_float (0-1)} dict.
+        subject: Subject label for title.
+
+    Returns:
+        Matplotlib Figure.
+    """
+    if not mastery_data:
+        return _placeholder_fig("No mastery data yet. Start a lesson!")
+
+    topics = list(mastery_data.keys())
+    values = [mastery_data[t] * 100 for t in topics]
+    bar_colors = [
+        COLORS["success"] if v >= 80 else
+        COLORS["secondary"] if v >= 50 else
+        COLORS["vowel"]
+        for v in values
+    ]
+
+    fig, ax = plt.subplots(figsize=(10, max(3, len(topics) * 0.6)))
+    fig.patch.set_facecolor(COLORS["bg"])
+    ax.set_facecolor(COLORS["bg"])
+
+    bars = ax.barh(topics, values, color=bar_colors, height=0.55)
+    ax.set_xlim(0, 115)
+    ax.axvline(80, color=COLORS["success"], linestyle="--",
+               linewidth=1.5, label="Mastery Target (80%)")
+    ax.axvline(50, color=COLORS["secondary"], linestyle=":",
+               linewidth=1, label="Minimum (50%)")
+
+    title = f"🏆 Topic Mastery" + (f" — {subject}" if subject else "")
+    ax.set_title(title, fontsize=14, fontweight="bold", color=COLORS["text"])
+    ax.set_xlabel("Mastery %", fontsize=11)
+    ax.legend(fontsize=9, loc="lower right")
+
+    for bar, val in zip(bars, values):
+        ax.text(val + 1, bar.get_y() + bar.get_height() / 2,
+                f"{val:.0f}%", va="center", fontsize=9, color=COLORS["text"])
+
+    plt.tight_layout()
+    return fig
+
+
+def generate_weekly_progress_chart(
+    daily_accuracy_data: list,
+    student_name: str = "Student",
+) -> plt.Figure:
+    """
+    Line chart showing accuracy trend over past 7 days/sessions.
+
+    Args:
+        daily_accuracy_data: List of dicts [{date, accuracy}, ...].
+        student_name: For chart title.
+
+    Returns:
+        Matplotlib Figure.
+    """
+    if not daily_accuracy_data:
+        daily_accuracy_data = [{"date": "Today", "accuracy": 0}]
+
+    labels = [s.get("date", f"Day {i+1}")[:10] for i, s in enumerate(daily_accuracy_data)]
+    scores = [s.get("accuracy", 0) for s in daily_accuracy_data]
+
+    fig, ax = plt.subplots(figsize=(9, 4))
+    fig.patch.set_facecolor(COLORS["bg"])
+    ax.set_facecolor(COLORS["bg"])
+
+    ax.plot(range(len(labels)), scores, marker="o", linewidth=2.5,
+            markersize=8, color=COLORS["primary"], zorder=3)
+    ax.fill_between(range(len(labels)), scores, alpha=0.12, color=COLORS["primary"])
+
+    ax.set_ylim(0, 105)
+    ax.axhline(80, color=COLORS["success"], linestyle="--",
+               linewidth=1.5, label="Target (80%)")
+
+    if len(scores) >= 2:
+        trend = "📈 Improving!" if scores[-1] > scores[0] else (
+            "📉 Let's push harder!" if scores[-1] < scores[0] else "➡️ Steady progress"
+        )
+        ax.set_title(
+            f"📊 {student_name}'s Weekly Progress  {trend}",
+            fontsize=13, fontweight="bold", color=COLORS["text"]
+        )
+    else:
+        ax.set_title(f"📊 {student_name}'s Weekly Progress",
+                     fontsize=13, fontweight="bold", color=COLORS["text"])
+
+    ax.set_xlabel("Session / Day", fontsize=11)
+    ax.set_ylabel("Accuracy (%)", fontsize=11)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=9)
+    ax.legend(fontsize=10)
+    ax.grid(axis="y", linestyle="--", alpha=0.35)
+
+    plt.tight_layout()
+    return fig
+
+
+def generate_grade_readiness_gauge(mastery_percentage: float, current_grade: int) -> plt.Figure:
+    """
+    Linear progress gauge showing how close student is to advancing grades.
+
+    Args:
+        mastery_percentage: 0-100 float.
+        current_grade: Current grade number.
+
+    Returns:
+        Matplotlib Figure.
+    """
+    fig, ax = plt.subplots(figsize=(9, 2.5))
+    fig.patch.set_facecolor(COLORS["bg"])
+    ax.set_facecolor(COLORS["bg"])
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 1)
+    ax.set_yticks([])
+    ax.set_xticks([0, 25, 50, 75, 90, 100])
+    ax.set_xticklabels(["0%", "25%", "50%", "75%", "90% ★", "100%"], fontsize=10)
+
+    # Background bar
+    ax.barh(0.5, 100, height=0.35, color="#E0E0E0", left=0, zorder=1)
+
+    # Progress bar
+    bar_color = (COLORS["success"] if mastery_percentage >= 90 else
+                 COLORS["secondary"] if mastery_percentage >= 50 else
+                 COLORS["vowel"])
+    ax.barh(0.5, mastery_percentage, height=0.35, color=bar_color, left=0, zorder=2)
+
+    # Threshold marker
+    ax.axvline(90, color=COLORS["success"], linestyle="--", linewidth=1.5,
+               label="Advance threshold (90%)", zorder=3)
+
+    ax.text(mastery_percentage / 2, 0.5, f"{mastery_percentage:.0f}%",
+            ha="center", va="center", fontsize=13, fontweight="bold",
+            color="white", zorder=4)
+
+    if mastery_percentage >= 90:
+        title = f"🎉 Grade {current_grade} Mastery: Ready for Grade {current_grade + 1}!"
+    else:
+        title = f"🎓 Grade {current_grade} Readiness: {mastery_percentage:.0f}%"
+
+    ax.set_title(title, fontsize=13, fontweight="bold", color=COLORS["text"], pad=10)
+    ax.legend(fontsize=9, loc="lower right")
+    plt.tight_layout()
+    return fig
+
+
+def generate_session_summary_card(session_data: dict) -> plt.Figure:
+    """
+    Visual summary card of a learning session.
+
+    Args:
+        session_data: Dict with keys: topics, correct, total, words_learned,
+                      duration_min, encouragement.
+
+    Returns:
+        Matplotlib Figure.
+    """
+    topics = session_data.get("topics", [])
+    correct = session_data.get("correct", 0)
+    total = session_data.get("total", 0)
+    words_learned = session_data.get("words_learned", 0)
+    duration = session_data.get("duration_min", 0)
+    pct = int(correct / total * 100) if total > 0 else 0
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    fig.patch.set_facecolor("#F0F8FF")
+    ax.set_facecolor("#F0F8FF")
+    ax.set_axis_off()
+
+    # Title
+    ax.text(0.5, 0.92, "✨ Session Complete! ✨", ha="center", va="top",
+            fontsize=16, fontweight="bold", color=COLORS["primary"],
+            transform=ax.transAxes)
+
+    stats_text = (
+        f"Questions:  {correct}/{total} correct ({pct}%)\n"
+        f"Topics covered:  {', '.join(topics) if topics else 'General practice'}\n"
+        f"New vocabulary:  {words_learned} words\n"
+        f"Time spent:  {duration} minutes"
+    )
+    ax.text(0.5, 0.60, stats_text, ha="center", va="center",
+            fontsize=11, color=COLORS["text"], transform=ax.transAxes,
+            linespacing=2.0, family="monospace")
+
+    encouragement = session_data.get("encouragement", "Great work today! Keep it up! 🌟")
+    ax.text(0.5, 0.10, encouragement, ha="center", va="bottom",
+            fontsize=12, color=COLORS["success"], fontweight="bold",
+            transform=ax.transAxes, style="italic")
+
+    plt.tight_layout()
+    return fig
+
+
+def generate_vocabulary_word_cloud(vocabulary_list: list) -> plt.Figure:
+    """
+    Display learned vocabulary as a styled grid (word cloud alternative without wordcloud lib).
+
+    Args:
+        vocabulary_list: List of dicts [{word, times_seen, times_correct}, ...].
+
+    Returns:
+        Matplotlib Figure.
+    """
+    if not vocabulary_list:
+        return _placeholder_fig("No vocabulary learned yet. Start a vocabulary lesson!")
+
+    # Sort by times_seen descending (most practiced = larger)
+    sorted_words = sorted(vocabulary_list, key=lambda w: w.get("times_seen", 1), reverse=True)[:30]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.patch.set_facecolor(COLORS["bg"])
+    ax.set_facecolor(COLORS["bg"])
+    ax.set_axis_off()
+    ax.set_title("📖 Your Vocabulary Bank", fontsize=14, fontweight="bold",
+                 color=COLORS["text"])
+
+    max_seen = max((w.get("times_seen", 1) for w in sorted_words), default=1)
+
+    x_positions = np.linspace(0.05, 0.95, 6)
+    y_positions = np.linspace(0.85, 0.10, 5)
+    positions = [(x, y) for y in y_positions for x in x_positions]
+
+    for i, word_data in enumerate(sorted_words[:len(positions)]):
+        word = word_data.get("word", "")
+        times_seen = word_data.get("times_seen", 1)
+        times_correct = word_data.get("times_correct", 0)
+        accuracy = times_correct / times_seen if times_seen > 0 else 0
+        font_size = 9 + int(times_seen / max_seen * 10)
+        color = (COLORS["success"] if accuracy >= 0.8 else
+                 COLORS["secondary"] if accuracy >= 0.5 else
+                 COLORS["vowel"])
+        if i < len(positions):
+            ax.text(positions[i][0], positions[i][1], word,
+                    ha="center", va="center", fontsize=font_size,
+                    color=color, fontweight="bold" if times_seen > 3 else "normal",
+                    transform=ax.transAxes)
+
+    plt.tight_layout()
+    return fig
