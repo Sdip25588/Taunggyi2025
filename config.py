@@ -152,6 +152,20 @@ AZURE_SPEECH_REGION: str = _get_key("AZURE_SPEECH_REGION", _SECRETS)
 TTS_PROVIDER: str = _get_key("TTS_PROVIDER", _SECRETS, "edge")  # "edge" (default, free) or "azure"
 
 # ─────────────────────────────────────────────
+# Gemini Model Selection
+#
+# Override this via environment variable or config_secrets.json:
+#   GEMINI_MODEL=gemini-2.0-flash          (recommended, fast & free)
+#   GEMINI_MODEL=gemini-pro                (older, widely available)
+#   GEMINI_MODEL=gemini-1.5-flash          (previous default)
+#
+# Priority: env var GEMINI_MODEL → config_secrets.json → default below.
+# If the chosen model is unavailable for your API key, the app will show
+# a clear error message telling you to switch to a supported model.
+# ─────────────────────────────────────────────
+GEMINI_MODEL: str = _get_key("GEMINI_MODEL", _SECRETS, "gemini-2.0-flash")
+
+# ─────────────────────────────────────────────
 # Model Routing Config
 # Structured for easy expansion to OpenAI / Claude later.
 # Each entry has: model_id, temperature defaults, max_tokens.
@@ -159,7 +173,7 @@ TTS_PROVIDER: str = _get_key("TTS_PROVIDER", _SECRETS, "edge")  # "edge" (defaul
 MODELS: dict = {
     "gemini": {
         "provider": "google",
-        "model_id": "gemini-1.5-flash",
+        "model_id": GEMINI_MODEL,
         "temperature_explain": 0.7,    # Conversational explanations
         "temperature_quiz": 0.3,       # Deterministic quiz generation
         "max_tokens": 2048,
