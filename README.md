@@ -310,17 +310,23 @@ cp config_secrets.json.example config_secrets.json
 
 `config_secrets.json` is git-ignored and loaded automatically — no shell commands required.
 
-### 6. Quick Python check
+### 6. Quick diagnostic script
 
-Run this one-liner to confirm the app will find your key:
+Run the included `check_api_key.py` script from the project root to get a clear status report:
 
-```python
-import os
-from dotenv import load_dotenv
-load_dotenv()
-key = os.getenv("GEMINI_API_KEY", "")
-print("Key found:", bool(key), "| Starts with AIza:", key.startswith("AIza") if key else False)
+```bash
+python check_api_key.py
 ```
+
+It checks the same sources the app uses (environment variable → `config_secrets.json`) and tells you:
+- Where the key was loaded from (env var, config file, or not found)
+- Whether it looks valid (correct prefix, no whitespace, not a placeholder)
+- Whether a misspelled variable like `GEMINIAI_API_KEY` was found
+- Exactly what to fix if something is wrong
+
+**Exit codes:** `0` = key looks good; `1` = problem detected.
+
+If the script prints `✅ OK`, you do NOT need to re-add your key — simply run `streamlit run main.py`.
 
 ---
 

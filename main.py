@@ -17,7 +17,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import APP_CONFIG, GEMINI_API_KEY
+from config import APP_CONFIG, GEMINI_API_KEY, validate_gemini_key
 import ai_teacher
 import student as student_db
 import gui_engine
@@ -148,11 +148,18 @@ def _init_rag() -> None:
 # ─────────────────────────────────────────────
 
 def _check_api_keys() -> None:
-    """Display a warning banner if the Gemini API key is missing."""
-    if not GEMINI_API_KEY:
+    """
+    Display a warning banner if the Gemini API key is missing or looks invalid.
+
+    Uses ``validate_gemini_key`` for thorough checks (empty, placeholder,
+    wrong format, leading/trailing whitespace) so users get an actionable
+    message rather than a cryptic API error later.
+    """
+    is_valid, message = validate_gemini_key(GEMINI_API_KEY)
+    if not is_valid:
         st.error(
-            "🔑 **Gemini API key not configured.** AI features will not work until "
-            "you provide your key using **one** of these methods:\n\n"
+            f"🔑 **Gemini API key problem:** {message}\n\n"
+            "**How to fix — choose one option:**\n\n"
             "**Option A — Environment variable (recommended):**\n"
             "```\nexport GEMINI_API_KEY=your_key_here\n```\n"
             "Add that line to `~/.zshrc` (Mac/Linux) or set it in Windows "
@@ -161,6 +168,8 @@ def _check_api_keys() -> None:
             "Copy `config_secrets.json.example` to `config_secrets.json` in the "
             "project root and fill in your key. "
             "This file is git-ignored and never committed.\n\n"
+            "💡 **Tip:** Run `python check_api_key.py` in the project folder to "
+            "diagnose key issues before starting the app.\n\n"
             "Get a free Gemini key at: https://aistudio.google.com/app/apikey",
         )
 
