@@ -303,6 +303,14 @@ HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
 GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
 
 
+_GREETING_PATTERNS = tuple(re.compile(rf"\b{re.escape(keyword)}\b") for keyword in GREETING_KEYWORDS)
+
+
+def _contains_greeting(text: str) -> bool:
+    """Return True if text contains a standalone greeting keyword/phrase."""
+    return any(pattern.search(text) for pattern in _GREETING_PATTERNS)
+
+
 def determine_intent(student_input: str) -> str:
     """
     Classify the student's message intent.
@@ -333,7 +341,7 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
-    if any(kw in text for kw in GREETING_KEYWORDS):
+    if _contains_greeting(text):
         return "greeting"
 
     # Existing intents
