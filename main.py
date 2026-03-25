@@ -17,7 +17,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import APP_CONFIG, GEMINI_API_KEY
+from config import APP_CONFIG, GEMINI_API_KEY, validate_gemini_key
 import ai_teacher
 import student as student_db
 import gui_engine
@@ -87,10 +87,12 @@ def _init_session_state() -> None:
         "rag_initialised": False,
         "show_visual": False,
         "suggested_visual": None,
-        # Professor / conversation mode state
-        "conv_state": "GREETING",
-        "greeting_done": False,
-        "todays_focus": None,
+        # Conversation mode state
+        "conversation_mode": True,
+        "conversation_state": "GREETING",
+        "pending_tutor_prompt": "",
+        "awaiting_student_reply": False,
+        "conversation_greeted": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -146,14 +148,29 @@ def _init_rag() -> None:
 # ─────────────────────────────────────────────
 
 def _check_api_keys() -> None:
-    """Display a warning banner if the Gemini API key is missing."""
-    if not GEMINI_API_KEY:
-        st.warning(
-            "⚠️ **Gemini API key not configured.** "
-            "AI features will show error messages until you add your key.\n\n"
-            "**Setup:** Copy `.env.example` to `.env` and add your `GEMINI_API_KEY`.\n\n"
-            "Get a free key at: https://aistudio.google.com/app/apikey",
-            icon="🔑",
+    """
+    Display a warning banner if the Gemini API key is missing or looks invalid.
+
+    Uses ``validate_gemini_key`` for thorough checks (empty, placeholder,
+    wrong format, leading/trailing whitespace) so users get an actionable
+    message rather than a cryptic API error later.
+    """
+    is_valid, message = validate_gemini_key(GEMINI_API_KEY)
+    if not is_valid:
+        st.error(
+            f"🔑 **Gemini API key problem:** {message}\n\n"
+            "**How to fix — choose one option:**\n\n"
+            "**Option A — Environment variable (recommended):**\n"
+            "```\nexport GEMINI_API_KEY=your_key_here\n```\n"
+            "Add that line to `~/.zshrc` (Mac/Linux) or set it in Windows "
+            "Environment Variables so it persists across sessions.\n\n"
+            "**Option B — Config file (beginner-friendly):**\n"
+            "Copy `config_secrets.json.example` to `config_secrets.json` in the "
+            "project root and fill in your key. "
+            "This file is git-ignored and never committed.\n\n"
+            "💡 **Tip:** Run `python check_api_key.py` in the project folder to "
+            "diagnose key issues before starting the app.\n\n"
+            "Get a free Gemini key at: https://aistudio.google.com/app/apikey",
         )
 
 
@@ -204,11 +221,20 @@ def _render_login() -> None:
                 st.session_state.current_subject = profile.get(
                     "current_subject", "Phonics"
                 )
-                # Reset professor/conversation state for the new session
-                st.session_state.conv_state = "GREETING"
-                st.session_state.greeting_done = False
-                st.session_state.todays_focus = None
-                st.session_state.chat_history = []
+
+                # Initialise conversation mode for this new session
+                from learning_orchestrator import get_initial_greeting, ConversationState
+                greeting_text = get_initial_greeting(username.strip())
+                st.session_state.chat_history = [{
+                    "role": "assistant",
+                    "content": greeting_text,
+                    "id": 0,
+                }]
+                st.session_state.conversation_state = ConversationState.GREETING
+                st.session_state.awaiting_student_reply = True
+                st.session_state.pending_tutor_prompt = greeting_text
+                st.session_state.conversation_greeted = True
+
                 st.rerun()
 
     # Feature highlights

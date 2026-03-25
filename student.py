@@ -53,7 +53,11 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             hint_usage_count    INTEGER DEFAULT 0,
             sessions_log        TEXT    DEFAULT '[]',
             grade_advancement_history TEXT DEFAULT '[]',
-            pace_preference     TEXT    DEFAULT 'normal'
+            pace_preference     TEXT    DEFAULT 'normal',
+            interests           TEXT    DEFAULT '',
+            onboarding_done     INTEGER DEFAULT 0,
+            independence_score  REAL    DEFAULT 0.5,
+            socratic_level      INTEGER DEFAULT 1
         )
     """)
     conn.commit()
@@ -74,6 +78,10 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         "sessions_log":               "TEXT DEFAULT '[]'",
         "grade_advancement_history":  "TEXT DEFAULT '[]'",
         "pace_preference":            "TEXT DEFAULT 'normal'",
+        "interests":                  "TEXT DEFAULT ''",
+        "onboarding_done":            "INTEGER DEFAULT 0",
+        "independence_score":         "REAL DEFAULT 0.5",
+        "socratic_level":             "INTEGER DEFAULT 1",
     }
     for col, definition in new_columns.items():
         if col not in existing:
@@ -314,7 +322,14 @@ def update_student_field(username: str, field: str, value) -> None:
         "current_lesson_index": "UPDATE students SET current_lesson_index = ? WHERE username = ?",
         "difficulty_level":     "UPDATE students SET difficulty_level = ? WHERE username = ?",
         "pace_preference":      "UPDATE students SET pace_preference = ? WHERE username = ?",
+
         "last_session_subject": "Update students SET last_session_subject = ? WHERE username = ?",
+
+        "interests":            "UPDATE students SET interests = ? WHERE username = ?",
+        "onboarding_done":      "UPDATE students SET onboarding_done = ? WHERE username = ?",
+        "independence_score":   "UPDATE students SET independence_score = ? WHERE username = ?",
+        "socratic_level":       "UPDATE students SET socratic_level = ? WHERE username = ?",
+        0c6d022e7134bec17a2c67def8a102d954001fc4
     }
 
     if field not in _FIELD_QUERIES:
@@ -548,6 +563,77 @@ def increment_hint_usage(username: str) -> None:
             (username,),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def update_independence_score(username: str, solved_independently: bool) -> float:
+    """
+    Adjust the student's independence score based on whether they solved a problem
+    on their own (without hints or immediate AI answers).
+
+    A correct independent answer increases the score; requesting a hint or getting
+    an answer immediately decreases it slightly.  Score is bounded to [0.0, 1.0].
+
+    Args:
+        username: Student's username.
+        solved_independently: True if the student worked it out without AI help.
+
+    Returns:
+        The updated independence score.
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT independence_score, socratic_level FROM students WHERE username = ?",
+            (username,),
+        ).fetchone()
+        if not row:
+            return 0.5
+
+        current = row["independence_score"] if row["independence_score"] is not None else 0.5
+        delta = 0.05 if solved_independently else -0.03
+        new_score = round(max(0.0, min(1.0, current + delta)), 4)
+
+        # Raise socratic_level when consistently independent (score >= 0.75)
+        # Lower it when struggling (score < 0.30)
+        current_level = row["socratic_level"] if row["socratic_level"] is not None else 1
+        if new_score >= 0.75 and current_level < 5:
+            new_level = current_level + 1
+        elif new_score < 0.30 and current_level > 1:
+            new_level = current_level - 1
+        else:
+            new_level = current_level
+
+        conn.execute(
+            "UPDATE students SET independence_score = ?, socratic_level = ? WHERE username = ?",
+            (new_score, new_level, username),
+        )
+        conn.commit()
+        return new_score
+    finally:
+        conn.close()
+
+
+def get_independence_info(username: str) -> dict:
+    """
+    Return the student's current independence score and Socratic level.
+
+    Returns:
+        Dict with: independence_score (float 0-1), socratic_level (int 1-5).
+    """
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT independence_score, socratic_level FROM students WHERE username = ?",
+            (username,),
+        ).fetchone()
+        if not row:
+            return {"independence_score": 0.5, "socratic_level": 1}
+        return {
+            "independence_score": row["independence_score"] if row["independence_score"] is not None else 0.5,
+            "socratic_level": row["socratic_level"] if row["socratic_level"] is not None else 1,
+        }
     finally:
         conn.close()
 

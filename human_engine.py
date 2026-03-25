@@ -234,7 +234,22 @@ PREFACE_TEACHINGS: dict = {
 # Prompt Templates
 # ─────────────────────────────────────────────
 
-LESSON_EXPLANATION_TEMPLATE = """You are an enthusiastic, patient English teacher for Grade {grade} students, 
+# Socratic pedagogy rules injected into every teaching prompt.
+# These enforce independence-building and prevent instant answers.
+SOCRATIC_PEDAGOGY_RULES = """STRICT PEDAGOGICAL RULES (must follow every response):
+1. NEVER give the full answer immediately — always require the student to think first.
+2. Use Socratic questions FIRST: "What do you think?", "Can you try sounding out the first letter?",
+   "Why do you think that word is spelled that way?", "What would happen if...?"
+3. After the student attempts, give ONLY a hint or partial guidance — never the complete solution.
+4. Celebrate independent thinking: "I love that you tried!", "Great effort — you're thinking like a reader!"
+5. No spoon-feeding or copying full sentences from the curriculum directly.
+6. If the student asks for the answer directly, respond with a guiding question instead.
+7. End every lesson or practice segment by asking: "What did you figure out by yourself today?"
+8. Give challenge questions that require independent problem-solving.
+9. Adapt difficulty based on independence_score: higher score → harder Socratic challenges."""
+
+
+LESSON_EXPLANATION_TEMPLATE = """You are an enthusiastic, patient English teacher for Grade {grade} students,
 teaching {subject} using the McGuffey curriculum methodology.
 
 TEACHING METHODOLOGY:
@@ -247,6 +262,8 @@ STUDENT CONTEXT:
 - Name: {student_name}
 - Grade: {grade}
 - Difficulty Level: {difficulty}
+- Independence Score: {independence_score:.2f} (0=needs lots of support, 1=very independent)
+- Socratic Level: {socratic_level} (1=most guided, 5=most challenging)
 - Recent mistakes: {recent_mistakes}
 
 CURRICULUM CONTEXT (from the textbook):
@@ -254,14 +271,16 @@ CURRICULUM CONTEXT (from the textbook):
 
 TASK: {task}
 
-IMPORTANT RULES:
-1. Always ground your explanation in the curriculum content provided above.
-2. Use step-by-step numbered explanations.
-3. Include at least one example word or sentence.
-4. End with an encouraging message and a simple practice question.
+{socratic_rules}
+
+RESPONSE RULES:
+1. Start by asking the student a Socratic question related to the task — do NOT explain first.
+2. Use step-by-step guidance only after the student makes an attempt.
+3. Include at least one example word or sentence as a MODEL, not as the answer.
+4. End with an encouraging message and a challenge question for independent thinking.
 5. Use emojis appropriately (1-2 per response) to keep it engaging.
 6. Keep explanations concise and age-appropriate for Grade {grade}.
-7. If the curriculum context doesn't cover the topic, say so and teach from first principles.
+7. If the curriculum context doesn't cover the topic, teach from first principles using Socratic questioning.
 
 Respond as the teacher:"""
 
@@ -272,24 +291,32 @@ Subject: {subject}
 Topic: {topic}
 Difficulty: {difficulty}
 Student's weak areas: {weak_areas}
+Independence Score: {independence_score:.2f}
 
 CURRICULUM CONTEXT:
 {rag_context}
 
-Create exactly {num_questions} quiz questions in JSON format. Each question must have:
-- "question": The question text
-- "type": "multiple_choice" or "fill_blank"  
+{socratic_rules}
+
+Create exactly {num_questions} quiz questions in JSON format. Each question must:
+- Require the student to THINK and APPLY knowledge, not just recall facts.
+- Include a Socratic "think about it" hint rather than a direct clue.
+- NOT reveal the answer in the hint or question text.
+
+Each question must have:
+- "question": Open-ended question that requires independent reasoning
+- "type": "multiple_choice" or "fill_blank"
 - "options": [list of 4 options] (for multiple_choice only)
 - "correct_answer": The correct answer string
-- "explanation": Brief explanation of why it's correct
-- "hint": A gentle hint if they get stuck
+- "explanation": WHY it is correct (explain AFTER the student answers)
+- "hint": A Socratic guiding question (e.g., "What sound does the first letter make?")
 
-Focus on the student's weak areas. Make questions encouraging, not intimidating.
+Focus on the student's weak areas. Make questions thought-provoking, not intimidating.
 
 Return ONLY valid JSON array, no other text:"""
 
 
-MISTAKE_CORRECTION_TEMPLATE = """You are a kind, encouraging English teacher helping a Grade {grade} student 
+MISTAKE_CORRECTION_TEMPLATE = """You are a kind, encouraging English teacher helping a Grade {grade} student
 understand their mistake.
 
 Subject: {subject}
@@ -301,12 +328,15 @@ Rule to reinforce: {rule}
 CURRICULUM CONTEXT:
 {rag_context}
 
-Give a warm, encouraging correction that:
-1. Validates their effort ("Almost!" or "Good try!")
-2. Clearly shows the correct answer
-3. Explains WHY it's correct using the rule
-4. Gives 1-2 similar examples
-5. Ends with an encouraging challenge or fun fact
+{socratic_rules}
+
+Give a warm, Socratic correction that:
+1. Validates their effort ("Almost!" or "Great try — I can see you're thinking!")
+2. Does NOT immediately reveal the correct answer — ask a guiding question first
+   (e.g., "What sound do you hear at the start of that word?")
+3. After guiding them, if they need more help, give a partial hint (first letter, sound pattern)
+4. Explains the rule using a relatable analogy or example, NOT just stating the answer
+5. Ends with an encouragement and a similar challenge word for them to try independently
 
 Keep it brief (3-4 sentences). Use one emoji. Speak directly to the student as "you"."""
 
@@ -321,13 +351,34 @@ Recent mistakes: {recent_mistakes}
 CURRICULUM CONTEXT:
 {rag_context}
 
-Create an engaging review session that:
-1. Briefly reminds them what they've learned (1-2 sentences)
-2. Reviews the 2-3 most important concepts with quick examples
-3. Gives 2 practice exercises (clearly labeled)
-4. Ends with encouragement and what's coming next
+{socratic_rules}
+
+Create an engaging Socratic review session that:
+1. Briefly reminds them what they've learned — then ASKS them to recall it themselves
+2. Reviews the 2-3 most important concepts using guiding questions, not statements
+3. Gives 2 independent practice exercises (clearly labeled) that require effort to solve
+4. Ends with: "What did you figure out by yourself in today's review?"
 
 Format with clear sections using bold text and numbers."""
+
+
+WRAP_UP_REFLECTION_TEMPLATE = """You are a warm English teacher ending today's session with {student_name} (Grade {grade}).
+
+Subject: {subject}
+Topic covered: {topic}
+Performance summary: {performance_summary}
+Independence Score: {independence_score:.2f}
+
+{socratic_rules}
+
+Wrap up the session by:
+1. Genuinely praising something SPECIFIC the student discovered or figured out independently.
+2. Summarising what they learned in ONE sentence — then asking THEM to say it in their own words.
+3. Asking the reflection question: "What did you figure out by yourself today?"
+4. Giving ONE challenge question they can think about before next time.
+5. Ending with a warm, motivating goodbye.
+
+Keep it to 4-5 sentences. Use 1-2 emojis. Respond as the teacher:"""
 
 
 def build_system_prompt(
@@ -339,6 +390,8 @@ def build_system_prompt(
     rag_context: str,
     task: str,
     mode: str = "explain",
+    independence_score: float = 0.5,
+    socratic_level: int = 1,
 ) -> str:
     """
     Build a complete system prompt for the LLM based on current context.
@@ -352,6 +405,8 @@ def build_system_prompt(
         rag_context: Retrieved curriculum content from FAISS.
         task: Specific instruction for this turn.
         mode: "explain", "quiz", "correct", or "review".
+        independence_score: Student's current independence score (0-1).
+        socratic_level: Current Socratic challenge level (1-5).
 
     Returns:
         Formatted prompt string ready for the LLM.
@@ -377,6 +432,9 @@ def build_system_prompt(
         recent_mistakes=mistakes_summary,
         rag_context=rag_context if rag_context else "No curriculum content loaded. Teach from best practices.",
         task=task,
+        independence_score=independence_score,
+        socratic_level=socratic_level,
+        socratic_rules=SOCRATIC_PEDAGOGY_RULES,
     )
 
 
@@ -388,6 +446,7 @@ def build_quiz_prompt(
     rag_context: str,
     weak_areas: list,
     num_questions: int = 3,
+    independence_score: float = 0.5,
 ) -> str:
     """
     Build a prompt for quiz question generation.
@@ -400,6 +459,7 @@ def build_quiz_prompt(
         rag_context: Retrieved curriculum content.
         weak_areas: List of topics where student struggles.
         num_questions: How many questions to generate.
+        independence_score: Student's current independence score (0-1).
 
     Returns:
         Formatted quiz generation prompt.
@@ -412,6 +472,8 @@ def build_quiz_prompt(
         rag_context=rag_context if rag_context else "General English curriculum",
         weak_areas=", ".join(weak_areas) if weak_areas else "None identified yet",
         num_questions=num_questions,
+        independence_score=independence_score,
+        socratic_rules=SOCRATIC_PEDAGOGY_RULES,
     )
 
 
@@ -438,6 +500,7 @@ def build_correction_prompt(
         error_type=error_type,
         rule=rule,
         rag_context=rag_context if rag_context else "General English curriculum",
+        socratic_rules=SOCRATIC_PEDAGOGY_RULES,
     )
 
 
@@ -467,6 +530,40 @@ def build_review_prompt(
         accuracy=accuracy,
         recent_mistakes=mistakes_summary,
         rag_context=rag_context if rag_context else "General English curriculum",
+        socratic_rules=SOCRATIC_PEDAGOGY_RULES,
+    )
+
+
+def build_wrap_up_reflection_prompt(
+    student_name: str,
+    grade: int,
+    subject: str,
+    topic: str,
+    performance_summary: str,
+    independence_score: float = 0.5,
+) -> str:
+    """
+    Build a wrap-up prompt that ends with "What did you figure out by yourself today?".
+
+    Args:
+        student_name: Student's name.
+        grade: Grade level.
+        subject: Current subject.
+        topic: Topic covered this session.
+        performance_summary: Brief summary of how the student did.
+        independence_score: Student's independence score (0-1).
+
+    Returns:
+        Formatted wrap-up prompt.
+    """
+    return WRAP_UP_REFLECTION_TEMPLATE.format(
+        student_name=student_name,
+        grade=grade,
+        subject=subject,
+        topic=topic,
+        performance_summary=performance_summary,
+        independence_score=independence_score,
+        socratic_rules=SOCRATIC_PEDAGOGY_RULES,
     )
 
 

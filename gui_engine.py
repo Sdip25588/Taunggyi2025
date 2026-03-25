@@ -6,6 +6,7 @@ dashboard, visual aids, and TTS controls.
 """
 
 import asyncio
+import base64
 import os
 import tempfile
 import logging
@@ -16,6 +17,7 @@ import streamlit as st
 
 from config import APP_CONFIG, TTS_CONFIG
 import learning_orchestrator
+from learning_orchestrator import ConversationState, handle_student_utterance
 import visual_teacher
 import adaptive_path
 import student as student_db
@@ -54,7 +56,7 @@ def _render_sidebar() -> None:
         st.markdown(f"🏫 Grade **{grade}**")
         st.divider()
 
-        # Grade selector (kept — teacher may adjust)
+        # Grade selector
         new_grade = st.selectbox(
             "🎓 Select Grade",
             APP_CONFIG["grade_levels"],
@@ -66,17 +68,18 @@ def _render_sidebar() -> None:
             st.session_state.student_profile["grade_level"] = new_grade
             st.rerun()
 
-        # Professor mode: show today's chosen topic (read-only for students)
-        todays_focus = st.session_state.get("todays_focus")
-        if todays_focus:
-            st.divider()
-            st.markdown("🎓 **Today's Lesson** *(chosen by your teacher)*")
-            st.markdown(f"📖 **{todays_focus.get('subject', '')}**")
-            st.markdown(f"🎯 *{todays_focus.get('topic', '')}*")
-        else:
-            st.divider()
-            st.markdown("🎓 **Today's Lesson**")
-            st.caption("Your teacher will choose today's topic after check-in.")
+        # Subject selector
+        current_subject = st.session_state.get("current_subject", "Phonics")
+        new_subject = st.selectbox(
+            "📖 Select Subject",
+            APP_CONFIG["subjects"],
+            index=APP_CONFIG["subjects"].index(current_subject),
+            key="sidebar_subject",
+        )
+        if new_subject != current_subject:
+            st.session_state.current_subject = new_subject
+            student_db.update_student_field(username, "current_subject", new_subject)
+            st.rerun()
 
         st.divider()
 
@@ -118,6 +121,54 @@ def _render_sidebar() -> None:
                 del st.session_state[key]
             st.rerun()
 
+        st.divider()
+
+        # Conversation mode toggle
+        st.subheader("🗣️ Conversation Mode")
+        conv_mode = st.session_state.get("conversation_mode", True)
+        new_conv_mode = st.toggle(
+            "Voice Conversation",
+            value=conv_mode,
+            key="conv_mode_toggle",
+            help="Turn on for a natural voice-first tutoring experience",
+        )
+        if new_conv_mode != conv_mode:
+            st.session_state.conversation_mode = new_conv_mode
+            st.rerun()
+
+        # Auto-play preference toggle (accessibility)
+        if st.session_state.get("conversation_mode"):
+            autoplay_pref = st.session_state.get("autoplay_tts", True)
+            new_autoplay = st.toggle(
+                "🔊 Auto-play AI voice",
+                value=autoplay_pref,
+                key="autoplay_toggle",
+                help=(
+                    "When on, the AI teacher's voice plays automatically. "
+                    "Turn off to use the manual 🔊 Read Aloud button instead."
+                ),
+            )
+            if new_autoplay != autoplay_pref:
+                st.session_state.autoplay_tts = new_autoplay
+                st.rerun()
+
+        if st.session_state.get("conversation_mode"):
+            conv_state = st.session_state.get("conversation_state", ConversationState.GREETING)
+            st.caption(f"💬 Stage: **{conv_state}**")
+            if st.button("🔁 Restart Conversation", use_container_width=True, key="restart_conv"):
+                from learning_orchestrator import get_initial_greeting
+                username_r = st.session_state.student_profile.get("username", "Student")
+                greeting = get_initial_greeting(username_r)
+                st.session_state.chat_history = [{
+                    "role": "assistant",
+                    "content": greeting,
+                    "id": 0,
+                }]
+                st.session_state.conversation_state = ConversationState.GREETING
+                st.session_state.awaiting_student_reply = True
+                st.session_state.pending_tutor_prompt = greeting
+                st.rerun()
+
 
 # ─────────────────────────────────────────────
 # Main Chat Area
@@ -125,39 +176,32 @@ def _render_sidebar() -> None:
 
 def _render_main_area() -> None:
     """Render the main chat and learning area."""
+    subject = st.session_state.get("current_subject", "Phonics")
     username = st.session_state.student_profile.get("username", "Student")
     grade = st.session_state.student_profile.get("grade_level", 1)
-    stats = student_db.get_stats(username)
 
-    # Determine display topic from professor focus or fallback
-    todays_focus = st.session_state.get("todays_focus")
-    if todays_focus:
-        subject = todays_focus.get("subject", "Phonics")
-        current_topic = todays_focus.get("topic", "")
-    else:
-        subject = st.session_state.get("current_subject", "Phonics")
-        current_topic = adaptive_path.get_current_topic(
-            subject, stats.get("current_lesson_index", 0)
-        )
+    # Current topic
+    stats = student_db.get_stats(username)
+    current_topic = adaptive_path.get_current_topic(
+        subject, stats.get("current_lesson_index", 0)
+    )
 
     # Header
     st.title(f"{APP_CONFIG['icon']} {APP_CONFIG['title']}")
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        if todays_focus:
-            st.caption(
-                f"🎓 Professor's choice: **{subject} — {current_topic}** | Grade {grade}"
-            )
-        else:
-            st.caption(f"📖 Grade {grade} | Conversation mode")
+        st.caption(f"📖 Subject: **{subject}** | 🎯 Topic: **{current_topic}**")
     with col2:
         if st.button("📊 Show Visual"):
             st.session_state.show_visual = True
+    with col3:
+        if st.button("🔄 New Topic", help="Move to the next topic"):
+            _advance_topic(username, subject, stats)
 
     st.divider()
 
     # Tabs
-    tab_learn, tab_quiz, tab_progress = st.tabs(["💬 Conversation", "📝 Quiz", "📈 Progress"])
+    tab_learn, tab_quiz, tab_progress = st.tabs(["💬 Learn", "📝 Quiz", "📈 Progress"])
 
     with tab_learn:
         _render_chat_tab(username, grade, subject, current_topic, stats)
@@ -176,12 +220,7 @@ def _render_chat_tab(
     current_topic: str,
     stats: dict,
 ) -> None:
-    """Render the professor-mode conversational chat interface."""
-    import voice_engine as ve
-
-    conv_state = st.session_state.get("conv_state", "GREETING")
-    greeting_done = st.session_state.get("greeting_done", False)
-
+    """Render the main chat / explanation interface with voice input support."""
     # Visual aid panel (collapsible)
     if st.session_state.get("show_visual"):
         with st.expander("🎨 Visual Aid", expanded=True):
@@ -190,25 +229,19 @@ def _render_chat_tab(
             st.session_state.show_visual = False
             st.rerun()
 
-    # ── Trigger initial greeting (once per session) ──────────────────────────
-    if not greeting_done:
-        greeting_response = learning_orchestrator.get_initial_greeting(username)
-        greeting_text = greeting_response["message"]
+    # Conversation mode: show prominent tutor prompt card when not in LESSON stage
+    conv_mode = st.session_state.get("conversation_mode", True)
+    conv_state = st.session_state.get("conversation_state", ConversationState.LESSON)
 
-        # Add to chat history
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": greeting_text,
-            "id": 0,
-        })
-        # Auto-play TTS for greeting
-        _autoplay_tts(greeting_text)
+    if conv_mode and conv_state != ConversationState.LESSON:
+        _render_conversation_prompt_card(username, grade, subject, current_topic, stats)
+        return  # Conversation card handles input; skip the regular chat below
 
-        st.session_state.greeting_done = True
-        st.session_state.conv_state = learning_orchestrator.CONV_CHECKIN
-        st.rerun()
+    # Voice input panel (collapsible) — always available as a fallback
+    with st.expander("🎤 Voice Input (speak your answer)", expanded=False):
+        _render_voice_input_panel(username, grade, subject, current_topic, stats)
 
-    # ── Chat history display ─────────────────────────────────────────────────
+    # Chat history
     chat_container = st.container()
     with chat_container:
         for msg in st.session_state.chat_history:
@@ -217,80 +250,67 @@ def _render_chat_tab(
             with st.chat_message(role, avatar=avatar):
                 st.markdown(msg["content"])
                 if role == "assistant":
-                    _render_tts_button(
-                        msg["content"],
-                        key=f"tts_{msg.get('id', id(msg))}",
-                    )
+                    _render_tts_button(msg["content"], key=f"tts_{msg.get('id', id(msg))}")
 
-    # ── "Speak now" prompt ───────────────────────────────────────────────────
-    _current_state = st.session_state.get("conv_state", learning_orchestrator.CONV_CHECKIN)
-    if _current_state in (
-        learning_orchestrator.CONV_CHECKIN,
-        learning_orchestrator.CONV_LESSON_PICK,
-    ):
-        st.info("🎤 **Please respond** — type your reply below, or use the voice recorder.")
-    elif _current_state == learning_orchestrator.CONV_LESSON:
-        st.info("💬 **You can speak or type** — ask questions, answer, or say 'quiz me'.")
+    # Initial greeting if no history (non-conversation mode fallback)
+    if not st.session_state.chat_history:
+        greeting = (
+            f"👋 Hello, **{username}**! I'm your English Tutor.\n\n"
+            f"Today we're working on **{subject} — {current_topic}** for Grade {grade}.\n\n"
+            f"You can:\n"
+            f"- 📖 Ask me to **explain** anything (e.g., 'What is a consonant blend?')\n"
+            f"- 📝 Say **'quiz me'** to test your knowledge\n"
+            f"- 🔍 Say **'review'** to go over what you've learned\n"
+            f"- 📊 Say **'show alphabet chart'** for visual help\n"
+            f"- 🗣️ Say **'read aloud'** to practice pronunciation\n"
+            f"- 📖 Say **'vocabulary'** to learn new words\n"
+            f"- ✍️ Say **'write'** to practice writing\n\n"
+            f"What would you like to learn today? 😊"
+        )
+        with st.chat_message("assistant", avatar=AVATAR_TEACHER):
+            st.markdown(greeting)
+            _render_tts_button(greeting, key="tts_greeting")
 
-    # ── Voice input panel ────────────────────────────────────────────────────
-    with st.expander("🎤 Speak Now (voice input)", expanded=False):
-        _render_voice_input_panel(username, grade, subject, current_topic, stats)
-
-    # ── Chat input ───────────────────────────────────────────────────────────
-    # Check if a voice transcription is waiting; only consume it once used
-    voice_text = st.session_state.get("voice_input_text")
-
+    # Chat input
     user_input = st.chat_input(
-        "Reply here... (or use the voice recorder above)",
+        f"Ask about {subject}...",
         key="chat_input",
-    ) or voice_text
+    )
 
     if user_input:
-        # Clear consumed voice input to avoid replaying it on next rerun
-        if voice_text and user_input == voice_text:
-            del st.session_state["voice_input_text"]
-
         # Display student message
         with st.chat_message("user", avatar=AVATAR_STUDENT):
             st.markdown(user_input)
 
+        # Add to history
         st.session_state.chat_history.append({
             "role": "user",
             "content": user_input,
             "id": len(st.session_state.chat_history),
         })
 
-        # ── Route through professor state machine ───────────────────────────
+        # Get AI response
         with st.chat_message("assistant", avatar=AVATAR_TEACHER):
             with st.spinner("Thinking... 🤔"):
-                response = learning_orchestrator.process_professor_turn(
+                response = learning_orchestrator.process_student_input(
                     student_input=user_input,
                     username=username,
+                    subject=subject,
                     grade=grade,
-                    conv_state=st.session_state.get("conv_state", learning_orchestrator.CONV_CHECKIN),
-                    todays_focus=st.session_state.get("todays_focus"),
+                    current_topic=current_topic,
                     pending_quiz=st.session_state.get("pending_quiz"),
                     session_history=st.session_state.chat_history,
                 )
 
             msg_text = response["message"]
             st.markdown(msg_text)
-            _render_tts_button(msg_text, key=f"tts_{len(st.session_state.chat_history)}")
 
-            # Auto-play TTS for lesson_pick and wrapup transitions
-            if response.get("intent") in ("lesson_pick", "wrapup", "doubt"):
-                _autoplay_tts(msg_text)
-
-            # Update conversation state
-            next_state = response.get("next_conv_state")
-            if next_state:
-                st.session_state.conv_state = next_state
-
-            # Update today's focus if professor chose one
-            if response.get("todays_focus"):
-                st.session_state.todays_focus = response["todays_focus"]
-                focus_subject = response["todays_focus"].get("subject", subject)
-                st.session_state.current_subject = focus_subject
+            # Auto-play AI teacher's response — respects accessibility preference
+            if (st.session_state.get("conversation_mode", True)
+                    and st.session_state.get("autoplay_tts", True)):
+                _auto_play_tts(msg_text)
+            else:
+                _render_tts_button(msg_text, key=f"tts_{len(st.session_state.chat_history)}")
 
             # Show performance tip if available
             perf = response.get("performance", {})
@@ -328,6 +348,159 @@ def _render_chat_tab(
         st.rerun()
 
 
+def _render_conversation_prompt_card(
+    username: str,
+    grade: int,
+    subject: str,
+    current_topic: str,
+    stats: dict,
+) -> None:
+    """
+    Render the conversation mode card: shows the latest tutor prompt prominently,
+    auto-plays TTS for the tutor, auto-processes voice input (no submit button),
+    and provides a text fallback. Used when conversation_state != LESSON.
+    """
+    # ── Tutor prompt banner ──
+    pending_prompt = st.session_state.get("pending_tutor_prompt", "")
+    if pending_prompt:
+        st.markdown(
+            f"""
+            <div style="background:linear-gradient(135deg,#4A90D9,#6AAFE6);
+                        padding:20px 24px;border-radius:14px;
+                        color:white;font-size:1.15rem;margin-bottom:16px;">
+              🧑‍🏫 <strong>Tutor says:</strong><br><br>
+              {pending_prompt}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        # Auto-play TTS — student hears AI teacher immediately (no button needed)
+        # Only auto-play once per new prompt to avoid looping on rerun
+        # Respects the user's auto-play accessibility preference
+        autoplay_enabled = st.session_state.get("autoplay_tts", True)
+        last_played = st.session_state.get("_last_autoplay_prompt", "")
+        if autoplay_enabled and pending_prompt != last_played:
+            _auto_play_tts(pending_prompt)
+            st.session_state["_last_autoplay_prompt"] = pending_prompt
+        else:
+            # Manual replay button (always available as fallback)
+            _render_tts_button(pending_prompt, key="tts_conv_prompt")
+
+    st.markdown("---")
+    st.markdown("#### 🎤 Your turn — speak or type your answer:")
+
+    # ── Voice recorder — auto-processes audio as soon as it's captured ──
+    voice_text = ""
+    try:
+        from audio_recorder_streamlit import audio_recorder
+        audio_bytes = audio_recorder(
+            text="🎙️ Tap to speak",
+            recording_color="#4A90D9",
+            neutral_color="#6B6B6B",
+            icon_name="microphone",
+            icon_size="2x",
+            key="conv_voice_recorder",
+        )
+        if audio_bytes:
+            # Auto-process: no manual "Submit" button required
+            with st.spinner("🎤 Listening... converting your speech to text"):
+                from voice_engine import listen_to_student
+                stt = listen_to_student(audio_bytes)
+            if stt["success"]:
+                voice_text = stt["text"]
+                st.success(f"✅ I heard: **\"{voice_text}\"**")
+            else:
+                err = stt.get("error", "")
+                if "not configured" in err.lower() or "not installed" in err.lower():
+                    st.info("🔤 Voice-to-text not configured — please type your answer below.")
+                else:
+                    st.warning(f"Could not understand audio: {err}. Please type below.")
+    except ImportError:
+        st.info("🎤 Audio recorder not installed. Please type your answer below.")
+
+    # ── Text fallback always available ──
+    col_input, col_send = st.columns([4, 1])
+    with col_input:
+        typed_input = st.text_input(
+            "Type your answer here:",
+            key="conv_text_input",
+            label_visibility="collapsed",
+            placeholder="Type your reply...",
+        )
+    with col_send:
+        send_clicked = st.button("Send ➤", key="conv_send_btn", use_container_width=True)
+
+    # ── Previous conversation history ──
+    if st.session_state.chat_history:
+        with st.expander("📜 Conversation so far", expanded=False):
+            for msg in st.session_state.chat_history:
+                role = msg["role"]
+                avatar = AVATAR_TEACHER if role == "assistant" else AVATAR_STUDENT
+                with st.chat_message(role, avatar=avatar):
+                    st.markdown(msg["content"])
+
+    # ── Process student response ──
+    student_reply = voice_text or (typed_input.strip() if send_clicked and typed_input.strip() else "")
+    if not student_reply:
+        return
+
+    # Add student message to history
+    st.session_state.chat_history.append({
+        "role": "user",
+        "content": student_reply,
+        "id": len(st.session_state.chat_history),
+    })
+
+    current_state = st.session_state.get("conversation_state", ConversationState.GREETING)
+
+    with st.spinner("Thinking... 🤔"):
+        conv_result = handle_student_utterance(
+            state=current_state,
+            utterance=student_reply,
+            username=username,
+            subject=subject,
+            grade=grade,
+            current_topic=current_topic,
+            session_history=st.session_state.chat_history,
+        )
+
+    new_state = conv_result["new_state"]
+    tutor_text = conv_result["tutor_text"]
+    subject_switch = conv_result.get("subject_switch")
+
+    # Apply subject switch if needed
+    if subject_switch and subject_switch != subject:
+        st.session_state.current_subject = subject_switch
+        student_db.update_student_field(username, "current_subject", subject_switch)
+        subject = subject_switch
+
+    # If transitioning to LESSON, use process_student_input for the opening
+    if new_state == ConversationState.LESSON and tutor_text:
+        # Add the transition message to history
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": tutor_text,
+            "id": len(st.session_state.chat_history),
+        })
+        st.session_state.conversation_state = ConversationState.LESSON
+        st.session_state.pending_tutor_prompt = ""
+        st.session_state.awaiting_student_reply = False
+        st.rerun()
+        return
+
+    if tutor_text:
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": tutor_text,
+            "id": len(st.session_state.chat_history),
+        })
+        st.session_state.pending_tutor_prompt = tutor_text
+
+    st.session_state.conversation_state = new_state
+    st.session_state.awaiting_student_reply = True
+    st.rerun()
+
+
 def _render_quiz_tab(
     username: str,
     grade: int,
@@ -354,11 +527,13 @@ def _render_quiz_tab(
                 import mistake_analyzer as ma
                 history = student_db.get_mistake_history(username)
                 weak = ma.get_repeated_weak_areas(history)
+                indep_info = student_db.get_independence_info(username)
                 prompt = human_engine.build_quiz_prompt(
                     subject=subject, grade=grade,
                     topic=current_topic,
                     difficulty=stats.get("difficulty_level", "Beginner"),
                     rag_context=rag_ctx, weak_areas=weak, num_questions=3,
+                    independence_score=indep_info.get("independence_score", 0.5),
                 )
                 raw = ai_teacher.call_llm(prompt, mode="quiz")
                 questions = learning_orchestrator.parse_quiz_json(raw)
@@ -708,29 +883,26 @@ def _render_tts_button(text: str, key: str) -> None:
             st.warning("TTS not available. Check your configuration.")
 
 
-def _autoplay_tts(text: str) -> None:
+def _auto_play_tts(text: str) -> None:
     """
-    Generate TTS audio and auto-play it using an HTML audio element.
-
-    Used for professor-mode greetings and key transitions so the student
-    hears the teacher's voice without pressing a button.
-    Falls back silently if TTS is unavailable.
+    Generate TTS audio and embed it with autoplay so the student hears
+    the AI teacher's response immediately — no button press required.
     """
+    audio_path = _generate_tts(text)
+    if not audio_path:
+        return
     try:
-        import base64
-        audio_path = _generate_tts(text)
-        if audio_path:
-            with open(audio_path, "rb") as f:
-                audio_bytes = f.read()
-            b64 = base64.b64encode(audio_bytes).decode()
-            st.markdown(
-                f'<audio autoplay style="display:none">'
-                f'<source src="data:audio/mp3;base64,{b64}" type="audio/mp3">'
-                f"</audio>",
-                unsafe_allow_html=True,
-            )
+        with open(audio_path, "rb") as f:
+            audio_data = f.read()
+        b64 = base64.b64encode(audio_data).decode()
+        st.markdown(
+            f'<audio autoplay style="display:none">'
+            f'<source src="data:audio/mp3;base64,{b64}" type="audio/mp3">'
+            f"</audio>",
+            unsafe_allow_html=True,
+        )
     except Exception as exc:
-        logger.debug("Auto-play TTS failed (non-critical): %s", exc)
+        logger.warning("_auto_play_tts: could not embed audio: %s", exc)
 
 
 def _generate_tts(text: str) -> Optional[str]:

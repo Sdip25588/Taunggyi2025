@@ -598,3 +598,129 @@ def generate_vocabulary_word_cloud(vocabulary_list: list) -> plt.Figure:
 
     plt.tight_layout()
     return fig
+
+
+# ─────────────────────────────────────────────
+# Onboarding Interest Visual
+# ─────────────────────────────────────────────
+
+def create_interest_visual(
+    interest: str,
+    emoji: str,
+    careers: list,
+    matched_keyword: str,
+) -> plt.Figure:
+    """
+    Create a colourful career-pathway visual for the onboarding interest step.
+
+    Shows the student's interest in the centre, connected to possible future
+    careers by a spoke diagram, with an English-learning bridge note.
+
+    Args:
+        interest: The student's raw interest text.
+        emoji: An emoji representing the interest.
+        careers: List of career strings.
+        matched_keyword: The normalised keyword matched from the interest.
+
+    Returns:
+        Matplotlib Figure.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    fig.patch.set_facecolor("#FFF8F0")
+    ax.set_facecolor("#FFF8F0")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_axis_off()
+
+    # ── Title ────────────────────────────────────────────────────────────────
+    ax.text(
+        0.5, 0.96,
+        f"Your Interest \u2192 Your Future! {emoji}",
+        ha="center", va="top",
+        fontsize=16, fontweight="bold",
+        color=COLORS["primary"],
+    )
+
+    # ── Centre circle (interest) ─────────────────────────────────────────────
+    centre_x, centre_y = 0.5, 0.52
+    centre_circle = plt.Circle(
+        (centre_x, centre_y), 0.13,
+        color=COLORS["secondary"], zorder=3,
+    )
+    ax.add_patch(centre_circle)
+    # Emoji on top of circle
+    ax.text(
+        centre_x, centre_y + 0.02,
+        emoji,
+        ha="center", va="center",
+        fontsize=26, zorder=4,
+    )
+    ax.text(
+        centre_x, centre_y - 0.06,
+        matched_keyword.title(),
+        ha="center", va="center",
+        fontsize=10, fontweight="bold",
+        color="white", zorder=4,
+    )
+
+    # ── Career spokes ────────────────────────────────────────────────────────
+    num_careers = min(len(careers), 5)
+    angles = np.linspace(0, 2 * np.pi, num_careers, endpoint=False)
+    spoke_len = 0.30
+    career_colors = [
+        COLORS["primary"], COLORS["success"], "#9B59B6",
+        "#E74C3C", "#1ABC9C",
+    ]
+
+    for i, angle in enumerate(angles):
+        cx = centre_x + spoke_len * np.cos(angle)
+        cy = centre_y + spoke_len * np.sin(angle)
+
+        # Line from centre to career bubble
+        ax.plot(
+            [centre_x, cx], [centre_y, cy],
+            color="#CCCCCC", linewidth=1.5, zorder=1,
+        )
+
+        # Career bubble
+        bubble = plt.Circle(
+            (cx, cy), 0.09,
+            color=career_colors[i % len(career_colors)],
+            alpha=0.85, zorder=2,
+        )
+        ax.add_patch(bubble)
+
+        career_label = careers[i]
+        # Split long labels onto two lines for better fit in bubble
+        if len(career_label) > 12:
+            words = career_label.split()
+            mid = max(1, len(words) // 2)
+            career_label = " ".join(words[:mid]) + "\n" + " ".join(words[mid:])
+
+        ax.text(
+            cx, cy,
+            career_label,
+            ha="center", va="center",
+            fontsize=8, fontweight="bold",
+            color="white", zorder=3,
+        )
+
+    # ── English bridge banner ─────────────────────────────────────────────────
+    banner_y = 0.08
+    banner_rect = mpatches.FancyBboxPatch(
+        (0.05, banner_y - 0.04), 0.90, 0.09,
+        boxstyle="round,pad=0.01",
+        facecolor=COLORS["primary"], alpha=0.15,
+        edgecolor=COLORS["primary"], linewidth=1.5,
+    )
+    ax.add_patch(banner_rect)
+    ax.text(
+        0.5, banner_y,
+        "\U0001f4d6 Learning English \u2192 Phonics \u00b7 Reading \u00b7 Spelling \u2192 Unlocks ALL these futures!",
+        ha="center", va="center",
+        fontsize=9, color=COLORS["primary"],
+        fontweight="bold",
+    )
+
+    plt.tight_layout()
+    return fig

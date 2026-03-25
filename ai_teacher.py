@@ -19,11 +19,13 @@ from google.genai import types as genai_types
 
 from config import (
     GEMINI_API_KEY,
+    GEMINI_MODEL,
     MODELS,
     ACTIVE_MODEL,
     PDF_PATHS,
     RAG_CONFIG,
     GEMINI_SAFETY_SETTINGS,
+    validate_gemini_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,12 +59,15 @@ def _import_rag_dependencies():
 # Gemini LLM setup
 # ─────────────────────────────────────────────
 
-def _configure_gemini() -> bool:
-    """Configure the Gemini SDK. Returns True if successful."""
-    if not GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY not set — LLM calls will fail.")
-        return False
-    return True
+def _configure_gemini() -> tuple[bool, str]:
+    """
+    Validate the Gemini API key configuration.
+
+    Returns:
+        (ok, message) — ok is False when a problem is detected;
+        message contains a human-readable description with remediation steps.
+    """
+    return validate_gemini_key(GEMINI_API_KEY)
 
 
 def call_llm(
@@ -81,11 +86,15 @@ def call_llm(
     Returns:
         The model's text response, or an error message string.
     """
-    if not _configure_gemini():
+    ok, key_message = _configure_gemini()
+    if not ok:
         return (
-            "⚠️ **Gemini API key not configured.**\n\n"
-            "Please add your `GEMINI_API_KEY` to the `.env` file.\n"
-            "Get a free key at: https://aistudio.google.com/app/apikey"
+            f"⚠️ **Gemini API key problem:** {key_message}\n\n"
+            "**Quick fix checklist:**\n"
+            "1. Make sure the variable is named exactly `GEMINI_API_KEY` (not `GEMINIAI_API_KEY` or any other spelling).\n"
+            "2. Check for accidental spaces or invisible characters around your key — copy it fresh from Google AI Studio.\n"
+            "3. Verify the key is active at https://aistudio.google.com/app/apikey\n"
+            "4. Add it to your `.env` file or `config_secrets.json` (see README → Configure API Keys)."
         )
 
     model_config = MODELS[ACTIVE_MODEL]
@@ -115,6 +124,43 @@ def call_llm(
         return response.text
     except Exception as exc:
         logger.error("Gemini API error: %s", exc)
+        exc_str = str(exc)
+        if "API_KEY_INVALID" in exc_str or "API key not valid" in exc_str:
+            return (
+                f"⚠️ AI response error: {exc}\n\n"
+                "**Your Gemini API key was rejected.** Common causes:\n"
+                "1. The key has a typo or was truncated — copy it fresh from Google AI Studio.\n"
+                "2. The variable is named `GEMINIAI_API_KEY` instead of `GEMINI_API_KEY` (extra 'AI').\n"
+                "3. There are invisible spaces around the key — paste into a plain text editor first.\n"
+                "4. The key has been revoked or is restricted — check at https://aistudio.google.com/app/apikey\n"
+                "See the README → Troubleshooting for step-by-step instructions."
+            )
+        if ("NOT_FOUND" in exc_str or "not found" in exc_str.lower()) and "model" in exc_str.lower():
+            current_model = model_config["model_id"]
+            return (
+                f"⚠️ AI response error: Model `{current_model}` was not found or is not available "
+                f"for your API key.\n\n"
+                "**How to fix — choose a supported model:**\n\n"
+                "**Option A — Edit `config_secrets.json`** (easiest for beginners):\n"
+                "```json\n"
+                "{\n"
+                '  "GEMINI_API_KEY": "your_key_here",\n'
+                '  "GEMINI_MODEL": "gemini-2.0-flash"\n'
+                "}\n"
+                "```\n\n"
+                "**Option B — Set an environment variable:**\n"
+                "- Mac/Linux: `export GEMINI_MODEL=gemini-2.0-flash`\n"
+                "- Windows:   `set GEMINI_MODEL=gemini-2.0-flash`\n\n"
+                "**Option C — Edit `.env` file:**\n"
+                "```\n"
+                "GEMINI_MODEL=gemini-2.0-flash\n"
+                "```\n\n"
+                "**Supported models** (try these if you still get errors):\n"
+                "- `gemini-2.0-flash` ← recommended, fast & free\n"
+                "- `gemini-pro`        ← older, widely available\n"
+                "- `gemini-1.5-flash`  ← previous default\n\n"
+                "After changing the model, restart the app with `streamlit run main.py`."
+            )
         return f"⚠️ AI response error: {exc}\n\nPlease check your API key and try again."
 
 

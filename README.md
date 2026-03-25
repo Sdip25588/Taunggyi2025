@@ -4,14 +4,14 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-red)](https://streamlit.io)
-[![Gemini](https://img.shields.io/badge/LLM-Gemini%201.5%20Flash-orange)](https://ai.google.dev)
+[![Gemini](https://img.shields.io/badge/LLM-Gemini%202.0%20Flash-orange)](https://ai.google.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
 
 ## ✨ Features
 
-- 🤖 **AI Tutor** — Google Gemini 1.5 Flash explains phonics, reading, and spelling step-by-step
+- 🤖 **AI Tutor** — Google Gemini 2.0 Flash explains phonics, reading, and spelling step-by-step
 - 📄 **RAG-Grounded** — Every lesson is anchored to the actual curriculum PDFs via FAISS vector search
 - 🧑‍🏫 **Preface-Driven Teaching** — Teaching methodology extracted directly from McGuffey textbook prefaces
 - 📊 **Progress Dashboard** — Track accuracy, streak, lessons completed, and topic mastery
@@ -93,7 +93,11 @@ cd Taunggyi2025
 pip install -r requirements.txt
 ```
 
-### 3. Configure Environment Variables
+### 3. Configure API Keys
+
+The app loads API keys using the following priority order — choose whichever method is easiest for you:
+
+#### Option A — Environment variable / `.env` file (recommended)
 
 ```bash
 cp .env.example .env
@@ -105,7 +109,116 @@ Edit `.env` and add your API keys:
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-### 4. Add Curriculum PDFs
+Alternatively, export the key directly in your shell so it persists every time:
+
+**Mac / Linux (add to `~/.zshrc` or `~/.bashrc`):**
+```bash
+export GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+**Windows — System Environment Variables:**
+1. Search *"Environment Variables"* in the Start Menu.
+2. Click **Environment Variables…** → **New…** under *User variables*.
+3. Name: `GEMINI_API_KEY`, Value: your key. Click OK.
+
+#### Option B — `config_secrets.json` (beginner-friendly, no shell setup)
+
+If you find shell environment variables confusing, use this alternative:
+
+1. Copy the example file:
+   ```bash
+   cp config_secrets.json.example config_secrets.json
+   ```
+2. Open `config_secrets.json` and replace the placeholder values with your real keys:
+   ```json
+   {
+     "GEMINI_API_KEY": "AIza...",
+     "GEMINI_MODEL": "gemini-2.0-flash",
+     "AZURE_SPEECH_KEY": "your_azure_key_here",
+     "AZURE_SPEECH_REGION": "eastus",
+     "TTS_PROVIDER": "edge"
+   }
+   ```
+3. **`config_secrets.json` is listed in `.gitignore`** — it will never be committed to version control.
+
+> ⚠️ **Security reminders:**
+> - Never paste your real API key directly into `config.py` or any other source file.
+> - Never commit `config_secrets.json` (or `.env`) to Git — both are git-ignored.
+> - If you accidentally expose a key, revoke it immediately at the provider's console.
+
+### 4. Choose Your Gemini Model (Optional)
+
+By default the app uses **`gemini-2.0-flash`** — fast, free, and the most widely available model.
+If you get a *"model not found"* error or want to try a different model, set `GEMINI_MODEL`:
+
+#### Supported models
+
+| Model name | Notes |
+|---|---|
+| `gemini-2.0-flash` | ✅ **Default** — fast, free tier, widely available |
+| `gemini-pro` | Older stable model, fallback if flash is unavailable |
+| `gemini-1.5-flash` | Previous default |
+| `gemini-1.5-pro` | Higher quality, may require billing enabled |
+
+#### How to set the model — choose ONE method:
+
+**Method 1 — `config_secrets.json`** (copy-paste ready, beginner-friendly):
+
+1. Open (or create) `config_secrets.json` in your project folder.
+2. Add the `GEMINI_MODEL` line:
+   ```json
+   {
+     "GEMINI_API_KEY": "AIzaSy...",
+     "GEMINI_MODEL": "gemini-2.0-flash"
+   }
+   ```
+3. Save the file.
+
+**Method 2 — `.env` file**:
+
+Open `.env` (copy from `.env.example` first if needed) and add:
+```env
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+**Method 3 — Environment variable** (terminal, no file editing):
+
+Mac / Linux:
+```bash
+export GEMINI_MODEL=gemini-2.0-flash
+```
+
+Windows (Command Prompt):
+```cmd
+set GEMINI_MODEL=gemini-2.0-flash
+```
+
+Windows (PowerShell):
+```powershell
+$env:GEMINI_MODEL = "gemini-2.0-flash"
+```
+
+#### Restart and verify
+
+After changing the model, restart the app:
+```bash
+streamlit run main.py
+```
+
+To confirm which model is active, run this one-liner:
+```bash
+python -c "from config import GEMINI_MODEL; print('Active model:', GEMINI_MODEL)"
+```
+
+#### Fallback if a model is unavailable
+
+If your API key does not have access to the chosen model, the app displays a clear in-chat error message with copy-paste commands to switch to a working model.
+Try `gemini-pro` as a reliable fallback:
+```json
+{ "GEMINI_MODEL": "gemini-pro" }
+```
+
+### 5. Add Curriculum PDFs
 
 Place the following files in the `curriculum/` folder:
 - `phonics.pdf` — Phonics curriculum for Grades 1–3
@@ -114,7 +227,7 @@ Place the following files in the `curriculum/` folder:
 
 See `curriculum/README.md` for details.
 
-### 5. Run the App
+### 6. Run the App
 
 ```bash
 streamlit run main.py
@@ -130,7 +243,7 @@ Open your browser to `http://localhost:8501` 🎉
 
 1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
 2. Click **"Create API Key"**
-3. Copy the key into your `.env` file as `GEMINI_API_KEY`
+3. Copy the key into your `.env` file **or** `config_secrets.json` (see [Configure API Keys](#3-configure-api-keys) above)
 4. **Free tier available** — no credit card needed
 
 ### Azure TTS (Optional — for premium voice quality)
@@ -162,7 +275,7 @@ The app uses **`edge-tts`** by default (free, no key needed). Azure TTS is optio
 
 | Component | Technology |
 |-----------|-----------|
-| LLM | Google Gemini 1.5 Flash |
+| LLM | Google Gemini 2.0 Flash (configurable — see below) |
 | Embeddings | `all-MiniLM-L6-v2` (HuggingFace, local, free) |
 | Vector Store | FAISS (local) |
 | PDF Extraction | LangChain + PyPDF2 |
@@ -173,7 +286,39 @@ The app uses **`edge-tts`** by default (free, no key needed). Azure TTS is optio
 
 ---
 
-## 🗺️ Roadmap
+## 🧪 Manual QA Steps
+
+### Professor-Led Conversation Flow
+
+1. **Start the app:**
+   ```bash
+   streamlit run main.py
+   ```
+2. **Login:** Enter any name (e.g. `Aung`) and select Grade 1. Click **Start Learning!**
+3. **Greeting check:** The AI should immediately greet you with a *varied* message (e.g. "Good morning, Aung! How are you today?"). The greeting changes each session.
+4. **Check-in reply:** Type a short reply such as `I'm good!` — the AI should acknowledge your mood and then introduce today's topic.
+5. **Doubt handling:** Before the lesson begins, type a question like `What is a vowel?` — the AI should answer the question *first*, then smoothly transition into the lesson.
+6. **Professor-chosen lesson:** The AI should announce the topic (e.g. "Today we'll work on Short Vowels — here's why…"). The student does **not** choose the topic.
+7. **Variety check (multi-session):** Log out, log back in. The topic/subject chosen in the second session should differ from the first (Strategy B variety rotation).
+8. **Gradual upgrade:** Answer quiz questions correctly several times. The AI should note your progress and gradually increase difficulty or move to the next topic.
+9. **Warm style check:** If you answer incorrectly, the AI should say something like "Almost there — let's try together!" rather than a harsh negative.
+10. **TTS/emoji check:** Click **🔊 Read Aloud** on any AI message. Emojis should *not* be read aloud; the spoken text should be clean and natural.
+
+### Session-State Smoke Test
+
+After login, open the Streamlit debug panel (add `?debug=true` to the URL, or add `st.write(st.session_state)` temporarily) and verify these keys exist with correct initial values:
+
+| Key | Expected initial value |
+|-----|------------------------|
+| `conv_state` | `"GREETING"` (`CONV_GREETING`) |
+| `greeting_done` | `False` |
+| `todays_focus` | `None` |
+| `chat_history` | `[]` |
+| `current_subject` | `"Phonics"` (or student's saved subject) |
+
+---
+
+
 
 - [ ] 7 subjects (Math, Science, History, Geography, Myanmar, Art)
 - [ ] Multi-model routing (OpenAI GPT-4, Anthropic Claude)
@@ -182,6 +327,137 @@ The app uses **`edge-tts`** by default (free, no key needed). Azure TTS is optio
 - [ ] Voice input (speech-to-text)
 - [ ] Mobile-responsive layout
 - [ ] Multiplayer/classroom mode
+
+---
+
+## 🔑 API Key Troubleshooting
+
+If you see errors like **"API key not valid"** or **"INVALID_ARGUMENT"**, work through this checklist:
+
+### 1. Use the correct variable name
+
+The app reads **`GEMINI_API_KEY`** (no extra letters).  
+A very common mistake is setting `GEMINIAI_API_KEY` (with an extra `AI` in the middle) — that key is never read by the app.
+
+```bash
+# ✅ Correct
+export GEMINI_API_KEY=AIzaSy...
+
+# ❌ Wrong (app cannot find this)
+export GEMINIAI_API_KEY=AIzaSy...
+```
+
+You can quickly verify which keys are in your environment:
+
+```bash
+echo $GEMINI_API_KEY          # should print your key, not blank
+echo $GEMINIAI_API_KEY        # if this prints something, rename it!
+```
+
+### 2. Check for hidden spaces or invisible characters
+
+Copy-pasting from chat or web pages can add invisible whitespace.  
+Paste the key into a plain text editor first, then copy it from there into your `.env` or terminal.
+
+### 3. Verify the key is active
+
+1. Go to [Google AI Studio → API Keys](https://aistudio.google.com/app/apikey).
+2. Confirm the key is listed and **not revoked**.
+3. If unsure, click **"Create API Key"** to generate a fresh one.
+
+### 4. Restart your terminal / app after changing keys
+
+Environment variable changes only take effect in **new** shell sessions.  
+After editing `.env` or exporting a variable, restart your terminal and then re-run the app:
+
+```bash
+streamlit run main.py
+```
+
+### 5. Use the `config_secrets.json` method if env vars are confusing
+
+```bash
+cp config_secrets.json.example config_secrets.json
+# Open config_secrets.json and replace "your_gemini_api_key_here" with your real key
+```
+
+`config_secrets.json` is git-ignored and loaded automatically — no shell commands required.
+
+### 6. Quick diagnostic script
+
+Run the included `check_api_key.py` script from the project root to get a clear status report:
+
+```bash
+python check_api_key.py
+```
+
+It checks the same sources the app uses (environment variable → `config_secrets.json`) and tells you:
+- Where the key was loaded from (env var, config file, or not found)
+- Whether it looks valid (correct prefix, no whitespace, not a placeholder)
+- Whether a misspelled variable like `GEMINIAI_API_KEY` was found
+- Exactly what to fix if something is wrong
+
+**Exit codes:** `0` = key looks good; `1` = problem detected.
+
+If the script prints `✅ OK`, you do NOT need to re-add your key — simply run `streamlit run main.py`.
+
+---
+
+### `zsh: command not found: code` on macOS
+
+This means the VS Code `code` command-line tool is not on your `PATH` yet. Fix it in three steps:
+
+#### Step 1 — Install the `code` shell command from VS Code
+
+1. Open **Visual Studio Code** (download it from <https://code.visualstudio.com/> if needed).
+2. Press **Cmd + Shift + P** to open the Command Palette.
+3. Type **Shell Command: Install 'code' command in PATH** and press **Enter**.
+4. VS Code will show: *"Shell command 'code' successfully installed in PATH."*
+
+#### Step 2 — Restart Terminal
+
+The change only takes effect in a **new** Terminal window. Quit Terminal completely and reopen it:
+
+```bash
+# Quit Terminal (Cmd + Q), then reopen it, then verify:
+which code
+code --version
+```
+
+You should see a path like `/usr/local/bin/code` and a version number such as `1.90.0`.
+
+#### Step 3 — If `code` is still not found after restarting
+
+Run the following commands to add VS Code to your `PATH` manually:
+
+```bash
+# Confirm the binary exists
+ls "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+
+# Add it to your shell profile permanently
+echo 'export PATH="$PATH:/Applications/Visual Studio Code.app/Contents/Resources/app/bin"' >> ~/.zshrc
+source ~/.zshrc
+
+# Verify
+which code
+code --version
+```
+
+#### Alternatives when `code` is not available
+
+If you still cannot use `code`, open files with one of these options instead:
+
+```bash
+# Open files in VS Code via macOS (works even without the PATH fix)
+open -a "Visual Studio Code" gui_engine.py learning_orchestrator.py main.py
+
+# Edit directly in Terminal with nano (no install required)
+nano gui_engine.py
+# Nano tips:
+#   Ctrl+W  — search (e.g. type <<<<<<< to jump to conflict markers)
+#   Ctrl+O  — save
+#   Ctrl+X  — exit
+```
 
 ---
 

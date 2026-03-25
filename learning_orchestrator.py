@@ -3,6 +3,13 @@ learning_orchestrator.py — Central coordinator for learning sessions.
 
 Receives student input, determines intent, orchestrates RAG retrieval,
 LLM calls, mistake analysis, student profile updates, and visual generation.
+
+Also manages the voice-first Conversation Mode state machine:
+  GREETING → CHECKIN → LESSON → WRAPUP
+
+  Note: The INTENT stage is folded into the CHECKIN → LESSON transition.
+  When the student selects a subject/topic in CHECKIN, the state moves directly
+  to LESSON (no separate INTENT state needed).
 """
 
 import json
@@ -25,369 +32,259 @@ logger = logging.getLogger(__name__)
 _DEFAULT_WRITING_SCORE = 0.7
 
 # ─────────────────────────────────────────────
-# Conversation state machine states
+# Conversation State Machine
 # ─────────────────────────────────────────────
 
-CONV_GREETING = "GREETING"
-CONV_CHECKIN = "CHECKIN"
-CONV_DOUBTS = "DOUBTS"
-CONV_LESSON_PICK = "LESSON_PICK"
-CONV_LESSON = "LESSON"
-CONV_WRAPUP = "WRAPUP"
+class ConversationState:
+    """Enumeration of dialog stages for the voice-first conversational loop."""
+    GREETING = "GREETING"
+    CHECKIN = "CHECKIN"
+    INTENT = "INTENT"
+    LESSON = "LESSON"
+    WRAPUP = "WRAPUP"
 
-# Keywords that suggest a student is asking a question/doubt (not just chatting)
-DOUBT_KEYWORDS = {
-    "what is", "what are", "what does", "what do", "how do", "how does",
-    "why", "when do", "where", "which", "can you explain", "i don't understand",
-    "i dont understand", "confused", "what's", "whats", "help me understand",
-    "what about", "tell me about", "explain", "meaning of", "define",
+
+# Mood keywords for supportive detection during check-in
+_NEGATIVE_MOOD_WORDS = {
+    "sad", "tired", "bad", "not good", "awful", "terrible", "sick", "upset",
+    "bored", "confused", "frustrated", "stressed", "unhappy", "worried", "scared",
+    "not great", "not well", "okay i guess", "so so",
+}
+_POSITIVE_MOOD_WORDS = {
+    "good", "great", "fine", "okay", "well", "happy", "wonderful", "amazing",
+    "fantastic", "excellent", "super", "brilliant", "ready", "excited",
 }
 
-# Short reply patterns that indicate the student didn't fully respond (for follow-up)
-_SHORT_REPLY_WORDS = {"ok", "okay", "fine", "good", "hi", "hello", "yes", "no",
-                      "sure", "ready", "yeah", "yep", "nope", "alright", "k", "idk"}
-
-# Number of student exchanges before triggering the lesson wrap-up
-LESSON_EXCHANGE_THRESHOLD = 8
-
-
-def is_doubt_or_question(text: str) -> bool:
-    """Return True if the student's message looks like a doubt or question."""
-    lower = text.strip().lower()
-    if lower.endswith("?"):
-        return True
-    return any(lower.startswith(kw) or f" {kw}" in lower for kw in DOUBT_KEYWORDS)
+# Subject/intent selection keywords for the CHECKIN → INTENT transition
+_PHONICS_WORDS = {"phonics", "sounds", "letters", "alphabet"}
+_READING_WORDS = {"reading", "read", "story", "text", "passage"}
+_SPELLING_WORDS = {"spelling", "spell", "words", "word"}
+_CONTINUE_WORDS = {"continue", "same", "last time", "where we left", "again", "that"}
 
 
-def is_short_unclear_reply(text: str) -> bool:
-    """Return True if the reply is too short/vague to act on."""
-    words = text.strip().lower().split()
-    if len(words) <= 3:
-        return all(w in _SHORT_REPLY_WORDS for w in words)
-    return False
+def get_initial_greeting(name: str) -> str:
+    """Return the opening greeting message for a new session."""
+    return f"Hello {name}! How are you today? 😊"
 
 
-def get_initial_greeting(username: str) -> dict:
+def _detect_mood(text: str) -> str:
+    """Detect student mood from utterance. Returns 'positive', 'negative', or 'neutral'."""
+    lower = text.lower()
+    if any(word in lower for word in _NEGATIVE_MOOD_WORDS):
+        return "negative"
+    if any(word in lower for word in _POSITIVE_MOOD_WORDS):
+        return "positive"
+    return "neutral"
+
+
+def _detect_subject_intent(text: str, current_subject: str) -> Optional[str]:
     """
-    Generate the professor's first greeting for a new session.
+    Detect if the student is selecting a subject or asking to continue.
 
-    Returns a response dict with the greeting message and conversation state.
+    Returns subject name ("Phonics", "Reading", "Spelling"), "continue", or None.
     """
-    greeting_text = human_engine.get_varied_greeting(username)
-    return {
-        "message": greeting_text,
-        "intent": "greeting",
-        "quiz_questions": None,
-        "visual_type": None,
-        "mistake_info": None,
-        "performance": {},
-        "next_topic": None,
-        "next_conv_state": CONV_CHECKIN,
-    }
+    lower = text.lower()
+    if any(w in lower for w in _CONTINUE_WORDS):
+        return "continue"
+    if any(w in lower for w in _PHONICS_WORDS):
+        return "Phonics"
+    if any(w in lower for w in _READING_WORDS):
+        return "Reading"
+    if any(w in lower for w in _SPELLING_WORDS):
+        return "Spelling"
+    return None
 
 
-def process_professor_turn(
-    student_input: str,
+def handle_student_utterance(
+    state: str,
+    utterance: str,
     username: str,
+    subject: str,
     grade: int,
-    conv_state: str,
-    todays_focus: Optional[dict],
-    pending_quiz: Optional[dict] = None,
+    current_topic: str,
     session_history: Optional[list] = None,
 ) -> dict:
     """
-    Professor-mode conversation state machine.
+    Process a student utterance within the conversation state machine.
 
-    Handles the full conversation loop:
-    CHECKIN → DOUBTS (if question) / LESSON_PICK → LESSON → WRAPUP
+    Handles direct questions at any state (answers them, then resumes state).
+    If a mood of confusion/negativity is detected during CHECKIN, responds
+    supportively before moving on.
 
     Args:
-        student_input: Text from the student.
-        username: Student's username.
-        grade: Grade level.
-        conv_state: Current conversation state string.
-        todays_focus: Dict {subject, topic, reason} chosen by the professor.
-        pending_quiz: If a quiz question awaits an answer.
-        session_history: List of previous messages.
+        state: Current ConversationState value.
+        utterance: What the student said or typed.
+        username: Student's name.
+        subject: Current subject.
+        grade: Grade level (1-5).
+        current_topic: Current lesson topic.
+        session_history: Previous messages for context.
 
     Returns:
-        Response dict with: message, intent, next_conv_state, quiz_questions,
-        visual_type, mistake_info, performance, next_topic, personalization,
-        grade_advancement, todays_focus.
+        Dict with keys:
+          - "new_state": str — next ConversationState
+          - "tutor_text": str — what the tutor says next (shown in chat + TTS)
+          - "lesson_intent": str or None — if LESSON started, the intent to pass on
+          - "subject_switch": str or None — if subject changed
     """
     profile = student_db.get_or_create_student(username)
     stats = student_db.get_stats(username)
-    mistake_history = student_db.get_mistake_history(username)
-    topic_mastery = student_db.get_topic_mastery(username)
 
-    # If a quiz is pending and student is answering it, handle directly
-    if pending_quiz and conv_state == CONV_LESSON:
-        intent = determine_intent(student_input)
-        if intent == "answer":
-            result = _handle_quiz_answer(
-                student_input=student_input,
-                username=username,
-                subject=todays_focus.get("subject", "Phonics") if todays_focus else "Phonics",
-                grade=grade,
-                pending_quiz=pending_quiz,
-                stats=stats,
-                mistake_history=mistake_history,
-                topic_mastery=topic_mastery,
-            )
-            result["next_conv_state"] = CONV_LESSON
-            result["todays_focus"] = todays_focus
-            return result
+    detected = determine_intent(utterance)
 
-    # ── CHECKIN state: student replied to the greeting ──────────────────────
-    if conv_state == CONV_CHECKIN:
-        # If student asks a question, route to DOUBTS first
-        if is_doubt_or_question(student_input):
-            return _handle_doubt_then_transition(
-                student_input=student_input,
-                username=username,
-                grade=grade,
-                stats=stats,
-                todays_focus=todays_focus,
-                topic_mastery=topic_mastery,
-            )
-
-        # Short/unclear reply → follow-up
-        if is_short_unclear_reply(student_input):
-            prompt = human_engine.build_checkin_followup_prompt(
-                name=username, grade=grade, student_response=student_input
-            )
-            reply = ai_teacher.call_llm(prompt, mode="explain")
-            return {
-                "message": reply,
-                "intent": "checkin_followup",
-                "quiz_questions": None,
-                "visual_type": None,
-                "mistake_info": None,
-                "performance": {},
-                "next_topic": None,
-                "next_conv_state": CONV_CHECKIN,
-                "todays_focus": todays_focus,
-            }
-
-        # Good response → move to LESSON_PICK
-        return _do_lesson_pick(
-            username=username,
-            grade=grade,
-            stats=stats,
-            profile=profile,
-            topic_mastery=topic_mastery,
-        )
-
-    # ── LESSON_PICK state ───────────────────────────────────────────────────
-    if conv_state == CONV_LESSON_PICK:
-        if is_doubt_or_question(student_input):
-            return _handle_doubt_then_transition(
-                student_input=student_input,
-                username=username,
-                grade=grade,
-                stats=stats,
-                todays_focus=todays_focus,
-                topic_mastery=topic_mastery,
-            )
-        return _do_lesson_pick(
-            username=username,
-            grade=grade,
-            stats=stats,
-            profile=profile,
-            topic_mastery=topic_mastery,
-        )
-
-    # ── LESSON state ─────────────────────────────────────────────────────────
-    if conv_state == CONV_LESSON:
-        if todays_focus is None:
-            # Safety fallback: if focus was lost, re-pick
-            return _do_lesson_pick(
-                username=username, grade=grade, stats=stats,
-                profile=profile, topic_mastery=topic_mastery,
-            )
-
-        subject = todays_focus.get("subject", "Phonics")
-        current_topic = todays_focus.get("topic", "")
-
-        # Student asks a doubt mid-lesson → answer then return to lesson
-        if is_doubt_or_question(student_input):
-            result = _handle_doubt_then_transition(
-                student_input=student_input,
-                username=username,
-                grade=grade,
-                stats=stats,
-                todays_focus=todays_focus,
-                topic_mastery=topic_mastery,
-            )
-            # After answering doubt, return to LESSON state
-            result["next_conv_state"] = CONV_LESSON
-            return result
-
-        # Normal lesson interaction (explain, quiz, review, etc.)
-        result = process_student_input(
-            student_input=student_input,
-            username=username,
-            subject=subject,
-            grade=grade,
-            current_topic=current_topic,
-            pending_quiz=pending_quiz,
-            session_history=session_history,
-        )
-        result["next_conv_state"] = CONV_LESSON
-        result["todays_focus"] = todays_focus
-
-        # Check for wrap-up signal (after enough lesson exchanges)
-        lesson_count = sum(
-            1 for m in (session_history or [])
-            if m.get("role") == "user"
-        )
-        if lesson_count >= LESSON_EXCHANGE_THRESHOLD:
-            result["next_conv_state"] = CONV_WRAPUP
-
-        return result
-
-    # ── WRAPUP state ─────────────────────────────────────────────────────────
-    if conv_state == CONV_WRAPUP:
-        subject = (todays_focus or {}).get("subject", "Phonics")
-        current_topic = (todays_focus or {}).get("topic", "today's lesson")
-        accuracy = stats.get("accuracy_pct", 0)
-        performance_summary = (
-            f"{accuracy:.0f}% accuracy across {stats.get('total_lessons', 1)} lesson(s) today"
-        )
-        prompt = human_engine.build_wrapup_prompt(
-            name=username,
-            grade=grade,
-            subject=subject,
-            topic=current_topic,
-            performance_summary=performance_summary,
-        )
-        reply = ai_teacher.call_llm(prompt, mode="explain")
+    # ── Inline direct-question answering: only during CHECKIN (not GREETING or LESSON) ──
+    # During GREETING we want the mood/check-in flow uninterrupted.
+    # During LESSON process_student_input handles all intents directly.
+    direct_question_intents = {"lesson", "pronunciation", "vocabulary", "hint"}
+    if state == ConversationState.CHECKIN and detected in direct_question_intents:
+        answer = _quick_answer(utterance, subject, grade, current_topic)
+        resume_prompt = _get_state_resume_prompt(state, username, subject, current_topic, stats)
         return {
-            "message": reply,
-            "intent": "wrapup",
-            "quiz_questions": None,
-            "visual_type": None,
-            "mistake_info": None,
-            "performance": adaptive_path.evaluate_performance(stats),
-            "next_topic": None,
-            "next_conv_state": CONV_LESSON,  # Reset to LESSON for continued chat
-            "todays_focus": todays_focus,
+            "new_state": state,
+            "tutor_text": f"{answer}\n\n{resume_prompt}",
+            "lesson_intent": None,
+            "subject_switch": None,
         }
 
-    # ── Fallback: treat as regular lesson input ───────────────────────────────
-    subject = (todays_focus or {}).get("subject", stats.get("current_subject", "Phonics"))
-    current_topic = (todays_focus or {}).get("topic", "")
-    result = process_student_input(
-        student_input=student_input,
-        username=username,
-        subject=subject,
-        grade=grade,
-        current_topic=current_topic,
-        pending_quiz=pending_quiz,
-        session_history=session_history,
-    )
-    result["next_conv_state"] = CONV_LESSON
-    result["todays_focus"] = todays_focus
-    return result
+    # ── State-specific handling ──
+    if state == ConversationState.GREETING:
+        mood = _detect_mood(utterance)
+        if mood == "negative":
+            tutor_text = (
+                f"I'm sorry to hear that! It's okay — learning can actually cheer us up. 💙 "
+                f"I'm here with you. What would you like to practice today? "
+                f"We have Phonics, Reading, or Spelling!"
+            )
+        elif mood == "positive":
+            tutor_text = (
+                f"That's wonderful to hear! 🌟 "
+                f"I'm glad you're feeling good today! "
+                f"What would you like to practice? We can do Phonics, Reading, or Spelling. "
+                f"Or shall we continue with **{current_topic}**?"
+            )
+        else:
+            tutor_text = (
+                f"Thank you for sharing! 😊 "
+                f"What would you like to practice today? "
+                f"We have **Phonics**, **Reading**, or **Spelling**. "
+                f"Or shall we pick up where we left off with **{current_topic}**?"
+            )
+        return {
+            "new_state": ConversationState.CHECKIN,
+            "tutor_text": tutor_text,
+            "lesson_intent": None,
+            "subject_switch": None,
+        }
 
+    if state == ConversationState.CHECKIN:
+        chosen = _detect_subject_intent(utterance, subject)
+        if chosen == "continue" or chosen is None:
+            # Continue with current subject
+            next_subject = subject
+            tutor_text = (
+                f"Great! Let's continue with **{subject} — {current_topic}**. 📚\n\n"
+                f"I'll start the lesson now. Feel free to ask questions at any time!"
+            )
+        else:
+            next_subject = chosen
+            tutor_text = (
+                f"Excellent choice! Let's work on **{next_subject}** today. 🎯\n\n"
+                f"I'll start the lesson now. Feel free to ask questions anytime!"
+            )
+        return {
+            "new_state": ConversationState.LESSON,
+            "tutor_text": tutor_text,
+            "lesson_intent": "lesson",
+            "subject_switch": next_subject if next_subject != subject else None,
+        }
 
-def _do_lesson_pick(
-    username: str,
-    grade: int,
-    stats: dict,
-    profile: dict,
-    topic_mastery: dict,
-) -> dict:
-    """
-    Professor chooses today's focus and introduces it to the student.
+    if state == ConversationState.LESSON:
+        # In LESSON state, fall through to normal process_student_input
+        return {
+            "new_state": ConversationState.LESSON,
+            "tutor_text": "",   # Will be filled by process_student_input
+            "lesson_intent": detected,
+            "subject_switch": None,
+        }
 
-    Returns a response dict with LESSON state and todays_focus populated.
-    """
-    focus = adaptive_path.choose_todays_focus(profile, topic_mastery)
-    subject = focus["subject"]
-    topic = focus["topic"]
-    reason = focus["reason"]
+    if state == ConversationState.WRAPUP:
+        # Student responded to wrap-up — either continue or end
+        lower = utterance.lower()
+        if any(w in lower for w in {"yes", "sure", "okay", "ok", "more", "continue", "another"}):
+            return {
+                "new_state": ConversationState.LESSON,
+                "tutor_text": f"Wonderful! Let's keep going! 🚀 What would you like to do — quiz, lesson, or something else?",
+                "lesson_intent": "lesson",
+                "subject_switch": None,
+            }
+        else:
+            return {
+                "new_state": ConversationState.WRAPUP,
+                "tutor_text": (
+                    f"Fantastic work today, {username}! 🌟 "
+                    f"Come back whenever you're ready to learn more. See you next time! 👋"
+                ),
+                "lesson_intent": None,
+                "subject_switch": None,
+            }
 
-    # Save last session subject for variety tracking
-    student_db.update_student_field(username, "last_session_subject", subject)
-    student_db.update_student_field(username, "current_subject", subject)
-
-    intro_prompt = human_engine.build_professor_lesson_intro_prompt(
-        name=username,
-        grade=grade,
-        subject=subject,
-        topic=topic,
-        reason=reason,
-    )
-    intro_text = ai_teacher.call_llm(intro_prompt, mode="explain")
-
-    # Append warm-up question
-    warmup_prompt = human_engine.build_warmup_prompt(
-        name=username,
-        grade=grade,
-        subject=subject,
-        topic=topic,
-        difficulty=stats.get("difficulty_level", "Beginner"),
-    )
-    warmup_text = ai_teacher.call_llm(warmup_prompt, mode="explain")
-
-    combined = f"{intro_text}\n\n{warmup_text}"
-
+    # Default fallback — treat as LESSON
     return {
-        "message": combined,
-        "intent": "lesson_pick",
-        "quiz_questions": None,
-        "visual_type": _suggest_visual(subject, topic),
-        "mistake_info": None,
-        "performance": adaptive_path.evaluate_performance(stats),
-        "next_topic": None,
-        "next_conv_state": CONV_LESSON,
-        "todays_focus": focus,
+        "new_state": ConversationState.LESSON,
+        "tutor_text": "",
+        "lesson_intent": detected,
+        "subject_switch": None,
     }
 
 
-def _handle_doubt_then_transition(
-    student_input: str,
-    username: str,
-    grade: int,
-    stats: dict,
-    todays_focus: Optional[dict],
-    topic_mastery: dict,
-) -> dict:
-    """Answer the student's doubt/question, then transition back to the lesson."""
-    prompt = human_engine.build_doubt_handler_prompt(
-        name=username,
-        grade=grade,
-        question=student_input,
+def get_wrapup_message(username: str) -> str:
+    """Return a warm wrap-up message that promotes reflection and independence."""
+    return (
+        f"You did an amazing job today, {username}! 🌟🎉 "
+        f"I'm really proud of your effort and independent thinking. "
+        f"Before we finish — **what did you figure out by yourself today?** "
+        f"(Take a moment to think! 🤔) "
+        f"Would you like to try one more challenge, or shall we finish here?"
     )
-    answer = ai_teacher.call_llm(prompt, mode="explain")
 
-    # If no focus yet, pick one now
-    if todays_focus is None:
-        profile = student_db.get_or_create_student(username)
-        focus = adaptive_path.choose_todays_focus(profile, topic_mastery)
-        student_db.update_student_field(username, "last_session_subject", focus["subject"])
-        student_db.update_student_field(username, "current_subject", focus["subject"])
-    else:
-        focus = todays_focus
 
-    subject = focus.get("subject", "Phonics")  # noqa: F841 — kept for clarity
-    topic = focus.get("topic", "")  # noqa: F841
-    # After answering the doubt, go straight to LESSON (focus is always set by now)
-    next_state = CONV_LESSON
+def _get_state_resume_prompt(
+    state: str, username: str, subject: str, current_topic: str, stats: dict
+) -> str:
+    """Return the re-engagement prompt to resume after answering an inline question."""
+    if state == ConversationState.CHECKIN:
+        return (
+            f"Now, what would you like to practice today — "
+            f"**Phonics**, **Reading**, or **Spelling**? "
+            f"Or shall we continue with **{current_topic}**?"
+        )
+    return f"Shall we get back to our lesson on **{current_topic}**? 😊"
 
-    return {
-        "message": answer,
-        "intent": "doubt",
-        "quiz_questions": None,
-        "visual_type": None,
-        "mistake_info": None,
-        "performance": adaptive_path.evaluate_performance(stats),
-        "next_topic": None,
-        "next_conv_state": next_state,
-        "todays_focus": focus,
-    }
 
+def _quick_answer(utterance: str, subject: str, grade: int, current_topic: str) -> str:
+    """
+    Handle a quick inline question using Socratic guidance.
+
+    Instead of giving the full answer, guides the student to think for themselves
+    before offering a brief clarification.
+    """
+    prompt = (
+        f"A Grade {grade} student asked a question during a conversation: '{utterance}'. "
+        f"IMPORTANT: Do NOT give the full answer immediately. "
+        f"First ask them one Socratic question to guide their thinking "
+        f"(e.g., 'What do you already know about this?', "
+        f"'Can you think of a similar word?'). "
+        f"Then, if they still need help, offer a brief 1-2 sentence child-friendly hint. "
+        f"Do not use bullet points. Keep it warm and conversational."
+    )
+    try:
+        return ai_teacher.call_llm(prompt, mode="explain", subject=subject)
+    except Exception:
+        return "That's a great question! What do you already know about it? Let's think together! 🤔"
+
+# ─────────────────────────────────────────────
+# Intent detection keywords
+# ─────────────────────────────────────────────
 QUIZ_KEYWORDS = {"quiz", "test", "question", "practise", "practice", "try", "challenge"}
 REVIEW_KEYWORDS = {"review", "revise", "revision", "remind", "recap", "again", "redo"}
 LESSON_KEYWORDS = {"teach", "learn", "explain", "what is", "how do", "show me", "tell me"}
@@ -403,64 +300,7 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
-
-
-def get_professor_todays_focus(username: str) -> dict:
-    """
-    Professor-led daily lesson focus using Strategy B (balance weak areas + variety)
-    combined with gradual upgrade logic for strong performers.
-
-    Call this once per session start to let the AI teacher decide what to teach today.
-
-    Args:
-        username: Student's username.
-
-    Returns:
-        Dict with:
-          - "subject":    str  — chosen subject for today
-          - "topic":      str  — chosen topic within that subject
-          - "reason":     str  — friendly explanation of why this was chosen
-          - "upgrade":    dict — gradual upgrade suggestion (may be "none")
-          - "strategy":   str  — always "B"
-    """
-    profile = student_db.get_or_create_student(username)
-    topic_mastery = student_db.get_topic_mastery(username)
-    stats = student_db.get_stats(username)
-
-    # Last session subject drives the variety penalty
-    last_session_subject: Optional[str] = profile.get("current_subject")
-
-    # Strategy B: choose today's focus
-    focus = adaptive_path.choose_todays_focus(
-        student_profile=profile,
-        topic_mastery=topic_mastery,
-        last_session_subject=last_session_subject,
-    )
-
-    # Gradual upgrade check
-    performance = adaptive_path.evaluate_performance(stats)
-    upgrade = personalization_engine.suggest_gradual_upgrade(
-        student_profile=profile,
-        topic_mastery=topic_mastery,
-        recent_accuracy_pct=performance.get("rolling_accuracy"),
-    )
-
-    # Persist the chosen subject so the next session can rotate away from it
-    student_db.update_student_field(username, "current_subject", focus["subject"])
-
-    # If a difficulty upgrade is suggested, apply it now
-    if upgrade["upgrade_type"] == "difficulty" and upgrade.get("new_difficulty"):
-        student_db.update_student_field(
-            username, "difficulty_level", upgrade["new_difficulty"]
-        )
-
-    return {
-        "subject": focus["subject"],
-        "topic": focus["topic"],
-        "reason": focus["reason"],
-        "upgrade": upgrade,
-        "strategy": "B",
-    }
+GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
 
 
 def determine_intent(student_input: str) -> str:
@@ -492,6 +332,9 @@ def determine_intent(student_input: str) -> str:
 
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
+
+    if any(kw in text for kw in GREETING_KEYWORDS):
+        return "greeting"
 
     # Existing intents
     if any(kw in text for kw in QUIZ_KEYWORDS):
@@ -562,6 +405,7 @@ def process_student_input(
     stats = student_db.get_stats(username)
     mistake_history = student_db.get_mistake_history(username)
     topic_mastery = student_db.get_topic_mastery(username)
+    independence_info = student_db.get_independence_info(username)
 
     # 2. Detect intent
     intent = determine_intent(student_input)
@@ -577,6 +421,7 @@ def process_student_input(
             stats=stats,
             mistake_history=mistake_history,
             topic_mastery=topic_mastery,
+            independence_info=independence_info,
         )
 
     # 3. Personalization check
@@ -608,6 +453,7 @@ def process_student_input(
             username=username, subject=subject, grade=grade,
             current_topic=current_topic, rag_context=rag_context,
             stats=stats, mistake_history=mistake_history,
+            independence_info=independence_info,
         )
     elif intent == "review":
         result = _handle_review_request(
@@ -645,14 +491,26 @@ def process_student_input(
         result = _handle_hint_request(
             student_input=student_input, username=username,
             subject=subject, grade=grade, stats=stats,
+            independence_info=independence_info,
         )
+    elif intent == "greeting":
+        result = {
+            "intent": "greeting",
+            "response": (
+                f"Hi {username}! 👋 It's great to hear from you. "
+                f"What would you like to learn in {subject} today?"
+            ),
+            "visual": None,
+            "pending_quiz": None,
+            "grade_advanced": False,
+        }
     else:
         # Default: lesson/explanation — with confusion-aware strategy
         result = _handle_lesson_request(
             student_input=student_input, username=username,
             subject=subject, grade=grade, current_topic=current_topic,
             rag_context=rag_context, stats=stats, mistake_history=mistake_history,
-            confusion_info=confusion_info,
+            confusion_info=confusion_info, independence_info=independence_info,
         )
 
     # 6. Attach personalization and grade advancement data
@@ -676,8 +534,12 @@ def _handle_lesson_request(
     stats: dict,
     mistake_history: list,
     confusion_info: Optional[dict] = None,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Handle a lesson explanation request, with confusion-adaptive strategy."""
+    """Handle a lesson explanation request, with confusion-adaptive and Socratic strategy."""
+    if independence_info is None:
+        independence_info = student_db.get_independence_info(username)
+
     # Apply confusion strategy if needed
     prompt_modifier = ""
     if confusion_info and confusion_info.get("is_confused"):
@@ -688,7 +550,7 @@ def _handle_lesson_request(
         prompt_modifier = strategy_data["prompt_modifier"]
         student_db.increment_confusion_count(username)
 
-    # Build prompt
+    # Build prompt — Socratic questioning first, not direct explanation
     task = student_input
     if prompt_modifier:
         task = f"{student_input}\n\nTEACHING STRATEGY: {prompt_modifier}"
@@ -702,6 +564,8 @@ def _handle_lesson_request(
         rag_context=rag_context,
         task=task,
         mode="explain",
+        independence_score=independence_info.get("independence_score", 0.5),
+        socratic_level=independence_info.get("socratic_level", 1),
     )
 
     # Call LLM
@@ -709,6 +573,15 @@ def _handle_lesson_request(
 
     # Increment lesson count
     student_db.increment_lesson(username)
+
+    # Track independence: only penalise when the student asks for help mid-problem.
+    # Proactive lesson requests (no recent wrong answer) are exploratory, not dependency.
+    recent_wrongs = [m for m in mistake_history[-3:] if m.get("type") not in ("correct",)]
+    is_seeking_help = bool(recent_wrongs) or any(
+        w in student_input.lower()
+        for w in ("help", "don't understand", "confused", "stuck", "what is", "tell me", "give me")
+    )
+    student_db.update_independence_score(username, solved_independently=not is_seeking_help)
 
     # Check for badge
     _check_and_award_badges(username, stats)
@@ -740,8 +613,11 @@ def _handle_quiz_request(
     rag_context: str,
     stats: dict,
     mistake_history: list,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Generate quiz questions for the current topic."""
+    """Generate Socratic quiz questions for the current topic."""
+    if independence_info is None:
+        independence_info = student_db.get_independence_info(username)
     weak_areas = mistake_analyzer.get_repeated_weak_areas(mistake_history)
     prompt = human_engine.build_quiz_prompt(
         subject=subject,
@@ -751,6 +627,7 @@ def _handle_quiz_request(
         rag_context=rag_context,
         weak_areas=weak_areas,
         num_questions=3,
+        independence_score=independence_info.get("independence_score", 0.5),
     )
 
     raw_response = ai_teacher.call_llm(prompt, mode="quiz", subject=subject)
@@ -790,10 +667,17 @@ def _handle_quiz_answer(
     stats: dict,
     mistake_history: list,
     topic_mastery: Optional[dict] = None,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Check a student's answer to a pending quiz question."""
+    """
+    Check a student's answer to a pending quiz question.
+
+    Uses Socratic guidance: after a wrong answer, guides with a hint question
+    rather than revealing the correct answer immediately.
+    """
     correct_answer = pending_quiz.get("correct_answer", "")
     explanation = pending_quiz.get("explanation", "")
+    socratic_hint = pending_quiz.get("hint", "")
 
     # Analyse the answer
     analysis = mistake_analyzer.analyze_answer(
@@ -804,6 +688,9 @@ def _handle_quiz_answer(
 
     # Update student progress
     student_db.update_progress(username, {"correct": analysis["is_correct"]})
+
+    # Track independence: correct answers without hints indicate growing independence
+    student_db.update_independence_score(username, solved_independently=analysis["is_correct"])
 
     # Update topic mastery in personalization engine
     current_topic = pending_quiz.get("topic", subject)
@@ -823,7 +710,7 @@ def _handle_quiz_answer(
             "student_answer": student_input,
             "type": analysis["type"],
         })
-        # Get enhanced correction from LLM
+        # Use Socratic correction: guide with a question, not the full answer
         rag_context = ai_teacher.retrieve_context(
             f"{subject} {correct_answer} {analysis['related_rule']}", subject=subject
         )
@@ -1154,17 +1041,36 @@ def _handle_hint_request(
     subject: str,
     grade: int,
     stats: dict,
+    independence_info: Optional[dict] = None,
 ) -> dict:
-    """Handle a student's request for a hint."""
-    student_db.increment_hint_usage(username)
+    """
+    Handle a student's request for a hint.
 
-    # Generate a generic hint based on current context
+    Uses Socratic questioning: guides the student toward discovering the answer
+    rather than providing it directly. Tracks hint usage to adjust independence score.
+    """
+    student_db.increment_hint_usage(username)
+    # Hint requests reduce independence score — student needed help
+    student_db.update_independence_score(username, solved_independently=False)
+
+    if independence_info is None:
+        independence_info = student_db.get_independence_info(username)
+
+    indep = independence_info.get("independence_score", 0.5)
+    socratic_lv = independence_info.get("socratic_level", 1)
+
+    # Socratic hint: guide toward the answer, not reveal it
     hint_prompt = (
-        f"A Grade {grade} student is learning {subject} and asked for a hint. "
+        f"A Grade {grade} student (independence score: {indep:.2f}, socratic level: {socratic_lv}) "
+        f"is learning {subject} and asked for a hint. "
         f"Their message: '{student_input}'. "
-        f"Give a gentle, encouraging hint without giving the full answer. "
-        f"Use the 'Let's think about it together' approach. "
-        f"One short hint only!"
+        f"IMPORTANT: Do NOT give the answer. Instead, ask ONE Socratic guiding question "
+        f"that helps them think it through themselves "
+        f"(e.g., 'What sound does the first letter make?', "
+        f"'Can you think of a word that rhymes with it?', "
+        f"'What do you already know about this?'). "
+        f"Keep it warm, encouraging, and one question only. "
+        f"End with 'I know you can figure it out! 💪'"
     )
 
     response_text = ai_teacher.call_llm(hint_prompt, mode="explain", subject=subject)

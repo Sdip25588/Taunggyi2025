@@ -3,22 +3,173 @@ config.py — Configuration for the AI English Education Platform.
 
 Loads API keys from environment variables, defines model routing,
 PDF paths, TTS settings, RAG parameters, and app settings.
+
+Key-loading priority (most secure first):
+  1. Environment variables (export GEMINI_API_KEY=... in your shell or .env file)
+  2. config_secrets.json in the project root (beginner-friendly fallback — git-ignored)
+
+Never hardcode real API keys in this file or commit them to version control.
 """
 
+import json
+import logging
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
-# Load .env file if present
+# Load .env file if present (standard python-dotenv approach)
 load_dotenv()
 
+_logger = logging.getLogger(__name__)
+
 # ─────────────────────────────────────────────
-# API Keys (loaded from environment variables)
+# Secrets-file fallback
 # ─────────────────────────────────────────────
+
 GEMINI_API_KEY: str = os.getenv("AIzaSyCJYm5EGqUx80i0-bRKzH5D185qhvR9Gtg", "")
 AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY", "")
 AZURE_SPEECH_REGION: str = os.getenv("AZURE_SPEECH_REGION", "")
 TTS_PROVIDER: str = os.getenv("TTS_PROVIDER", "edge")  # "edge" (default, free) or "azure"
+
+def _load_secrets_file() -> dict:
+    """
+    Load API keys from config_secrets.json in the project root.
+
+    This file is listed in .gitignore and must never be committed.
+    It provides a beginner-friendly alternative to shell environment variables.
+    Returns an empty dict if the file is absent or cannot be parsed.
+    """
+    secrets_path = Path(__file__).parent / "config_secrets.json"
+    if not secrets_path.exists():
+        return {}
+    try:
+        with secrets_path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            _logger.warning("config_secrets.json must contain a JSON object — ignoring.")
+            return {}
+        return data
+    except (json.JSONDecodeError, OSError) as exc:
+        _logger.warning("Could not read config_secrets.json: %s", exc)
+        return {}
+
+
+def _get_key(name: str, secrets: dict, default: str = "") -> str:
+    """
+    Return the value for *name*, checking environment variables first,
+    then the secrets dict (loaded from config_secrets.json), then *default*.
+
+    Environment variables take priority even when their value is an empty string,
+    so an explicit `export FOO=` in the shell is respected and the secrets file
+    is not consulted.
+    """
+    if name in os.environ:
+        return os.environ[name]
+    return secrets.get(name, default)
+
+
+_SECRETS: dict = _load_secrets_file()
+
+# ─────────────────────────────────────────────
+# API Keys
+# ─────────────────────────────────────────────
+
+# Common misspellings of GEMINI_API_KEY that users accidentally set.
+_GEMINI_KEY_TYPOS: tuple = (
+    "GEMINIAI_API_KEY",   # extra "AI" — most common user mistake
+    "GEMINI_APIKEY",
+    "GEMINI_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GEMINI_API_KEY",
+)
+
+# Placeholder strings that must never be treated as real keys.
+# Keep these in sync with config_secrets.json.example and .env.example.
+_KEY_PLACEHOLDERS: frozenset = frozenset({
+    "your_gemini_api_key_here",
+    "AIza...",
+    "placeholder",
+    "your_key_here",
+    "",
+})
+
+
+def _warn_gemini_key_typos() -> None:
+    """
+    Emit a clear warning if a common GEMINI_API_KEY misspelling is set in
+    the environment but the canonical GEMINI_API_KEY is missing.
+
+    This helps users who copied code like ``os.environ["GEMINIAI_API_KEY"] = …``
+    without realising the correct name is ``GEMINI_API_KEY``.
+    """
+    if os.environ.get("GEMINI_API_KEY"):
+        return  # Correct key present — nothing to warn about.
+    for typo in _GEMINI_KEY_TYPOS:
+        if os.environ.get(typo):
+            _logger.warning(
+                "Found environment variable '%s' but the app requires 'GEMINI_API_KEY'. "
+                "Please rename it: export GEMINI_API_KEY=<your_key>",
+                typo,
+            )
+            return
+
+
+def validate_gemini_key(key: str) -> tuple[bool, str]:
+    """
+    Perform basic sanity checks on a Gemini API key string.
+
+    Returns:
+        (is_valid, message) — ``is_valid`` is False when a known problem is
+        detected; ``message`` explains what to check.
+    """
+    if not key:
+        return False, (
+            "GEMINI_API_KEY is not set. "
+            "Add it to your .env file or config_secrets.json. "
+            "Get a free key at https://aistudio.google.com/app/apikey"
+        )
+    stripped = key.strip()
+    if stripped != key:
+        return False, (
+            "GEMINI_API_KEY contains leading or trailing whitespace. "
+            "Make sure you copy only the key characters with no spaces."
+        )
+    if key in _KEY_PLACEHOLDERS:
+        return False, (
+            "GEMINI_API_KEY looks like a placeholder, not a real key. "
+            "Replace it with your actual key from https://aistudio.google.com/app/apikey"
+        )
+    if not key.startswith("AIza"):
+        return False, (
+            "GEMINI_API_KEY does not look like a valid Google API key "
+            "(expected to start with 'AIza'). "
+            "Double-check that you copied the key correctly."
+        )
+    return True, "OK"
+
+
+_warn_gemini_key_typos()
+
+GEMINI_API_KEY: str = _get_key("GEMINI_API_KEY", _SECRETS)
+AZURE_SPEECH_KEY: str = _get_key("AZURE_SPEECH_KEY", _SECRETS)
+AZURE_SPEECH_REGION: str = _get_key("AZURE_SPEECH_REGION", _SECRETS)
+TTS_PROVIDER: str = _get_key("TTS_PROVIDER", _SECRETS, "edge")  # "edge" (default, free) or "azure"
+
+# ─────────────────────────────────────────────
+# Gemini Model Selection
+#
+# Override this via environment variable or config_secrets.json:
+#   GEMINI_MODEL=gemini-2.0-flash          (recommended, fast & free)
+#   GEMINI_MODEL=gemini-pro                (older, widely available)
+#   GEMINI_MODEL=gemini-1.5-flash          (previous default)
+#
+# Priority: env var GEMINI_MODEL → config_secrets.json → default below.
+# If the chosen model is unavailable for your API key, the app will show
+# a clear error message telling you to switch to a supported model.
+# ─────────────────────────────────────────────
+GEMINI_MODEL: str = _get_key("GEMINI_MODEL", _SECRETS, "gemini-2.0-flash")
+        0c6d022e7134bec17a2c67def8a102d954001fc4
 
 # ─────────────────────────────────────────────
 # Model Routing Config
@@ -28,7 +179,7 @@ TTS_PROVIDER: str = os.getenv("TTS_PROVIDER", "edge")  # "edge" (default, free) 
 MODELS: dict = {
     "gemini": {
         "provider": "google",
-        "model_id": "gemini-1.5-flash",
+        "model_id": GEMINI_MODEL,
         "temperature_explain": 0.7,    # Conversational explanations
         "temperature_quiz": 0.3,       # Deterministic quiz generation
         "max_tokens": 2048,
@@ -137,6 +288,12 @@ PRONUNCIATION_GOOD_THRESHOLD: float = 0.70
 # Language support
 SUPPORTED_LANGUAGES: list = ["en"]
 DEFAULT_LANGUAGE: str = "en"
+
+# ─────────────────────────────────────────────
+# AI Teacher Identity
+# Change this one value to update the teacher's name everywhere.
+# ─────────────────────────────────────────────
+AI_TEACHER_NAME: str = "San"
 
 # ─────────────────────────────────────────────
 # Safety Settings for Gemini (education-safe)
