@@ -69,6 +69,83 @@ _SECRETS: dict = _load_secrets_file()
 # ─────────────────────────────────────────────
 # API Keys
 # ─────────────────────────────────────────────
+
+# Common misspellings of GEMINI_API_KEY that users accidentally set.
+_GEMINI_KEY_TYPOS: tuple = (
+    "GEMINIAI_API_KEY",   # extra "AI" — most common user mistake
+    "GEMINI_APIKEY",
+    "GEMINI_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GEMINI_API_KEY",
+)
+
+# Placeholder strings that must never be treated as real keys.
+# Keep these in sync with config_secrets.json.example and .env.example.
+_KEY_PLACEHOLDERS: frozenset = frozenset({
+    "your_gemini_api_key_here",
+    "AIza...",
+    "placeholder",
+    "your_key_here",
+    "",
+})
+
+
+def _warn_gemini_key_typos() -> None:
+    """
+    Emit a clear warning if a common GEMINI_API_KEY misspelling is set in
+    the environment but the canonical GEMINI_API_KEY is missing.
+
+    This helps users who copied code like ``os.environ["GEMINIAI_API_KEY"] = …``
+    without realising the correct name is ``GEMINI_API_KEY``.
+    """
+    if os.environ.get("GEMINI_API_KEY"):
+        return  # Correct key present — nothing to warn about.
+    for typo in _GEMINI_KEY_TYPOS:
+        if os.environ.get(typo):
+            _logger.warning(
+                "Found environment variable '%s' but the app requires 'GEMINI_API_KEY'. "
+                "Please rename it: export GEMINI_API_KEY=<your_key>",
+                typo,
+            )
+            return
+
+
+def validate_gemini_key(key: str) -> tuple[bool, str]:
+    """
+    Perform basic sanity checks on a Gemini API key string.
+
+    Returns:
+        (is_valid, message) — ``is_valid`` is False when a known problem is
+        detected; ``message`` explains what to check.
+    """
+    if not key:
+        return False, (
+            "GEMINI_API_KEY is not set. "
+            "Add it to your .env file or config_secrets.json. "
+            "Get a free key at https://aistudio.google.com/app/apikey"
+        )
+    stripped = key.strip()
+    if stripped != key:
+        return False, (
+            "GEMINI_API_KEY contains leading or trailing whitespace. "
+            "Make sure you copy only the key characters with no spaces."
+        )
+    if key in _KEY_PLACEHOLDERS:
+        return False, (
+            "GEMINI_API_KEY looks like a placeholder, not a real key. "
+            "Replace it with your actual key from https://aistudio.google.com/app/apikey"
+        )
+    if not key.startswith("AIza"):
+        return False, (
+            "GEMINI_API_KEY does not look like a valid Google API key "
+            "(expected to start with 'AIza'). "
+            "Double-check that you copied the key correctly."
+        )
+    return True, "OK"
+
+
+_warn_gemini_key_typos()
+
 GEMINI_API_KEY: str = _get_key("GEMINI_API_KEY", _SECRETS)
 AZURE_SPEECH_KEY: str = _get_key("AZURE_SPEECH_KEY", _SECRETS)
 AZURE_SPEECH_REGION: str = _get_key("AZURE_SPEECH_REGION", _SECRETS)

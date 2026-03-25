@@ -257,7 +257,72 @@ After login, open the Streamlit debug panel (add `?debug=true` to the URL, or ad
 
 ---
 
-## 🛠️ Troubleshooting
+## 🔑 API Key Troubleshooting
+
+If you see errors like **"API key not valid"** or **"INVALID_ARGUMENT"**, work through this checklist:
+
+### 1. Use the correct variable name
+
+The app reads **`GEMINI_API_KEY`** (no extra letters).  
+A very common mistake is setting `GEMINIAI_API_KEY` (with an extra `AI` in the middle) — that key is never read by the app.
+
+```bash
+# ✅ Correct
+export GEMINI_API_KEY=AIzaSy...
+
+# ❌ Wrong (app cannot find this)
+export GEMINIAI_API_KEY=AIzaSy...
+```
+
+You can quickly verify which keys are in your environment:
+
+```bash
+echo $GEMINI_API_KEY          # should print your key, not blank
+echo $GEMINIAI_API_KEY        # if this prints something, rename it!
+```
+
+### 2. Check for hidden spaces or invisible characters
+
+Copy-pasting from chat or web pages can add invisible whitespace.  
+Paste the key into a plain text editor first, then copy it from there into your `.env` or terminal.
+
+### 3. Verify the key is active
+
+1. Go to [Google AI Studio → API Keys](https://aistudio.google.com/app/apikey).
+2. Confirm the key is listed and **not revoked**.
+3. If unsure, click **"Create API Key"** to generate a fresh one.
+
+### 4. Restart your terminal / app after changing keys
+
+Environment variable changes only take effect in **new** shell sessions.  
+After editing `.env` or exporting a variable, restart your terminal and then re-run the app:
+
+```bash
+streamlit run main.py
+```
+
+### 5. Use the `config_secrets.json` method if env vars are confusing
+
+```bash
+cp config_secrets.json.example config_secrets.json
+# Open config_secrets.json and replace "your_gemini_api_key_here" with your real key
+```
+
+`config_secrets.json` is git-ignored and loaded automatically — no shell commands required.
+
+### 6. Quick Python check
+
+Run this one-liner to confirm the app will find your key:
+
+```python
+import os
+from dotenv import load_dotenv
+load_dotenv()
+key = os.getenv("GEMINI_API_KEY", "")
+print("Key found:", bool(key), "| Starts with AIza:", key.startswith("AIza") if key else False)
+```
+
+---
 
 ### `zsh: command not found: code` on macOS
 
