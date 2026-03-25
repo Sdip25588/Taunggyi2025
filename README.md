@@ -4,14 +4,14 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-red)](https://streamlit.io)
-[![Gemini](https://img.shields.io/badge/LLM-Gemini%201.5%20Flash-orange)](https://ai.google.dev)
+[![Gemini](https://img.shields.io/badge/LLM-Gemini%202.0%20Flash-orange)](https://ai.google.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 ---
 
 ## ✨ Features
 
-- 🤖 **AI Tutor** — Google Gemini 1.5 Flash explains phonics, reading, and spelling step-by-step
+- 🤖 **AI Tutor** — Google Gemini 2.0 Flash explains phonics, reading, and spelling step-by-step
 - 📄 **RAG-Grounded** — Every lesson is anchored to the actual curriculum PDFs via FAISS vector search
 - 🧑‍🏫 **Preface-Driven Teaching** — Teaching methodology extracted directly from McGuffey textbook prefaces
 - 📊 **Progress Dashboard** — Track accuracy, streak, lessons completed, and topic mastery
@@ -133,6 +133,7 @@ If you find shell environment variables confusing, use this alternative:
    ```json
    {
      "GEMINI_API_KEY": "AIza...",
+     "GEMINI_MODEL": "gemini-2.0-flash",
      "AZURE_SPEECH_KEY": "your_azure_key_here",
      "AZURE_SPEECH_REGION": "eastus",
      "TTS_PROVIDER": "edge"
@@ -145,7 +146,79 @@ If you find shell environment variables confusing, use this alternative:
 > - Never commit `config_secrets.json` (or `.env`) to Git — both are git-ignored.
 > - If you accidentally expose a key, revoke it immediately at the provider's console.
 
-### 4. Add Curriculum PDFs
+### 4. Choose Your Gemini Model (Optional)
+
+By default the app uses **`gemini-2.0-flash`** — fast, free, and the most widely available model.
+If you get a *"model not found"* error or want to try a different model, set `GEMINI_MODEL`:
+
+#### Supported models
+
+| Model name | Notes |
+|---|---|
+| `gemini-2.0-flash` | ✅ **Default** — fast, free tier, widely available |
+| `gemini-pro` | Older stable model, fallback if flash is unavailable |
+| `gemini-1.5-flash` | Previous default |
+| `gemini-1.5-pro` | Higher quality, may require billing enabled |
+
+#### How to set the model — choose ONE method:
+
+**Method 1 — `config_secrets.json`** (copy-paste ready, beginner-friendly):
+
+1. Open (or create) `config_secrets.json` in your project folder.
+2. Add the `GEMINI_MODEL` line:
+   ```json
+   {
+     "GEMINI_API_KEY": "AIzaSy...",
+     "GEMINI_MODEL": "gemini-2.0-flash"
+   }
+   ```
+3. Save the file.
+
+**Method 2 — `.env` file**:
+
+Open `.env` (copy from `.env.example` first if needed) and add:
+```env
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+**Method 3 — Environment variable** (terminal, no file editing):
+
+Mac / Linux:
+```bash
+export GEMINI_MODEL=gemini-2.0-flash
+```
+
+Windows (Command Prompt):
+```cmd
+set GEMINI_MODEL=gemini-2.0-flash
+```
+
+Windows (PowerShell):
+```powershell
+$env:GEMINI_MODEL = "gemini-2.0-flash"
+```
+
+#### Restart and verify
+
+After changing the model, restart the app:
+```bash
+streamlit run main.py
+```
+
+To confirm which model is active, run this one-liner:
+```bash
+python -c "from config import GEMINI_MODEL; print('Active model:', GEMINI_MODEL)"
+```
+
+#### Fallback if a model is unavailable
+
+If your API key does not have access to the chosen model, the app displays a clear in-chat error message with copy-paste commands to switch to a working model.
+Try `gemini-pro` as a reliable fallback:
+```json
+{ "GEMINI_MODEL": "gemini-pro" }
+```
+
+### 5. Add Curriculum PDFs
 
 Place the following files in the `curriculum/` folder:
 - `phonics.pdf` — Phonics curriculum for Grades 1–3
@@ -154,7 +227,7 @@ Place the following files in the `curriculum/` folder:
 
 See `curriculum/README.md` for details.
 
-### 5. Run the App
+### 6. Run the App
 
 ```bash
 streamlit run main.py
@@ -202,7 +275,7 @@ The app uses **`edge-tts`** by default (free, no key needed). Azure TTS is optio
 
 | Component | Technology |
 |-----------|-----------|
-| LLM | Google Gemini 1.5 Flash |
+| LLM | Google Gemini 2.0 Flash (configurable — see below) |
 | Embeddings | `all-MiniLM-L6-v2` (HuggingFace, local, free) |
 | Vector Store | FAISS (local) |
 | PDF Extraction | LangChain + PyPDF2 |

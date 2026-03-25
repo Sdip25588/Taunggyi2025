@@ -19,6 +19,7 @@ from google.genai import types as genai_types
 
 from config import (
     GEMINI_API_KEY,
+    GEMINI_MODEL,
     MODELS,
     ACTIVE_MODEL,
     PDF_PATHS,
@@ -133,6 +134,32 @@ def call_llm(
                 "3. There are invisible spaces around the key — paste into a plain text editor first.\n"
                 "4. The key has been revoked or is restricted — check at https://aistudio.google.com/app/apikey\n"
                 "See the README → Troubleshooting for step-by-step instructions."
+            )
+        if ("NOT_FOUND" in exc_str or "not found" in exc_str.lower()) and "model" in exc_str.lower():
+            current_model = model_config["model_id"]
+            return (
+                f"⚠️ AI response error: Model `{current_model}` was not found or is not available "
+                f"for your API key.\n\n"
+                "**How to fix — choose a supported model:**\n\n"
+                "**Option A — Edit `config_secrets.json`** (easiest for beginners):\n"
+                "```json\n"
+                "{\n"
+                '  "GEMINI_API_KEY": "your_key_here",\n'
+                '  "GEMINI_MODEL": "gemini-2.0-flash"\n'
+                "}\n"
+                "```\n\n"
+                "**Option B — Set an environment variable:**\n"
+                "- Mac/Linux: `export GEMINI_MODEL=gemini-2.0-flash`\n"
+                "- Windows:   `set GEMINI_MODEL=gemini-2.0-flash`\n\n"
+                "**Option C — Edit `.env` file:**\n"
+                "```\n"
+                "GEMINI_MODEL=gemini-2.0-flash\n"
+                "```\n\n"
+                "**Supported models** (try these if you still get errors):\n"
+                "- `gemini-2.0-flash` ← recommended, fast & free\n"
+                "- `gemini-pro`        ← older, widely available\n"
+                "- `gemini-1.5-flash`  ← previous default\n\n"
+                "After changing the model, restart the app with `streamlit run main.py`."
             )
         return f"⚠️ AI response error: {exc}\n\nPlease check your API key and try again."
 
