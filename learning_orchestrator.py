@@ -407,6 +407,9 @@ def process_student_input(
     topic_mastery = student_db.get_topic_mastery(username)
     independence_info = student_db.get_independence_info(username)
 
+    # Record the current subject so adaptive_path can apply variety logic next session
+    student_db.update_student_field(username, "last_session_subject", subject)
+
     # 2. Detect intent
     intent = determine_intent(student_input)
 
