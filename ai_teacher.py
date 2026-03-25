@@ -24,6 +24,7 @@ from config import (
     PDF_PATHS,
     RAG_CONFIG,
     GEMINI_SAFETY_SETTINGS,
+    validate_gemini_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,12 +58,15 @@ def _import_rag_dependencies():
 # Gemini LLM setup
 # ─────────────────────────────────────────────
 
-def _configure_gemini() -> bool:
-    """Configure the Gemini SDK. Returns True if successful."""
-    if not GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY not set — LLM calls will fail.")
-        return False
-    return True
+def _configure_gemini() -> tuple[bool, str]:
+    """
+    Validate the Gemini API key configuration.
+
+    Returns:
+        (ok, message) — ok is False when a problem is detected;
+        message contains a human-readable description with remediation steps.
+    """
+    return validate_gemini_key(GEMINI_API_KEY)
 
 
 def call_llm(
@@ -81,11 +85,15 @@ def call_llm(
     Returns:
         The model's text response, or an error message string.
     """
-    if not _configure_gemini():
+    ok, key_message = _configure_gemini()
+    if not ok:
         return (
-            "⚠️ **Gemini API key not configured.**\n\n"
-            "Please add your `GEMINI_API_KEY` to the `.env` file.\n"
-            "Get a free key at: https://aistudio.google.com/app/apikey"
+            f"⚠️ **Gemini API key problem:** {key_message}\n\n"
+            "**Quick fix checklist:**\n"
+            "1. Make sure the variable is named exactly `GEMINI_API_KEY` (not `GEMINIAI_API_KEY` or any other spelling).\n"
+            "2. Check for accidental spaces or invisible characters around your key — copy it fresh from Google AI Studio.\n"
+            "3. Verify the key is active at https://aistudio.google.com/app/apikey\n"
+            "4. Add it to your `.env` file or `config_secrets.json` (see README → Configure API Keys)."
         )
 
     model_config = MODELS[ACTIVE_MODEL]
@@ -115,6 +123,17 @@ def call_llm(
         return response.text
     except Exception as exc:
         logger.error("Gemini API error: %s", exc)
+        exc_str = str(exc)
+        if "API_KEY_INVALID" in exc_str or "API key not valid" in exc_str:
+            return (
+                f"⚠️ AI response error: {exc}\n\n"
+                "**Your Gemini API key was rejected.** Common causes:\n"
+                "1. The key has a typo or was truncated — copy it fresh from Google AI Studio.\n"
+                "2. The variable is named `GEMINIAI_API_KEY` instead of `GEMINI_API_KEY` (extra 'AI').\n"
+                "3. There are invisible spaces around the key — paste into a plain text editor first.\n"
+                "4. The key has been revoked or is restricted — check at https://aistudio.google.com/app/apikey\n"
+                "See the README → Troubleshooting for step-by-step instructions."
+            )
         return f"⚠️ AI response error: {exc}\n\nPlease check your API key and try again."
 
 
