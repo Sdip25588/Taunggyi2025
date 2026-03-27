@@ -301,16 +301,19 @@ ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
 GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
+_GREETING_PATTERN = re.compile(
+    rf"(?<!\w)(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})(?!\w)"
+)
 
 
-def _contains_keyword(text: str, keywords: set[str]) -> bool:
+def _contains_greeting(text: str) -> bool:
     """
-    Return True if any keyword appears as a standalone word/phrase in the text.
+    Return True if any greeting keyword appears as a standalone word/phrase.
 
     Using word boundaries prevents short keywords like "hey" from matching inside
     larger words such as "they".
     """
-    return any(re.search(rf"(?<!\\w){re.escape(kw)}(?!\\w)", text) for kw in keywords)
+    return bool(_GREETING_PATTERN.search(text))
 
 
 def determine_intent(student_input: str) -> str:
@@ -343,7 +346,7 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
-    if _contains_keyword(text, GREETING_KEYWORDS):
+    if _contains_greeting(text):
         return "greeting"
 
     # Existing intents
