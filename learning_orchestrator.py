@@ -311,7 +311,7 @@ GREETING_KEYWORDS = (
 )
 # Pattern derived from GREETING_KEYWORDS at import time.
 _GREETING_PATTERN = re.compile(
-    rf"(?<!\w)(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})(?!\w)",
+    rf"\b(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})\b",
     flags=re.IGNORECASE,
 )
 
