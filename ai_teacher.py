@@ -171,7 +171,7 @@ def call_llm(
             logger.error("OpenRouter failed: %s", openrouter_error)
 
         try:
-            logger.info("("Switching to Groq fallback...")
+            logger.info("Switching to Groq fallback...")
             return call_groq(prompt)
         
         except Exception as groq_error:
