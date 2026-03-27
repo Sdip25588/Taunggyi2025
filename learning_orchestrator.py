@@ -300,9 +300,16 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
-GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
+GREETING_KEYWORDS = (
+    "hey",
+    "hi",
+    "hello",
+    "good morning",
+    "good afternoon",
+    "good evening",
+)
 _GREETING_PATTERN = re.compile(
-    rf"(?<!\w)(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})(?!\w)"
+    rf"\b(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})\b"
 )
 
 
