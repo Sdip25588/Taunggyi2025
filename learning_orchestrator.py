@@ -288,6 +288,7 @@ def _quick_answer(utterance: str, subject: str, grade: int, current_topic: str) 
 QUIZ_KEYWORDS = {"quiz", "test", "question", "practise", "practice", "try", "challenge"}
 REVIEW_KEYWORDS = {"review", "revise", "revision", "remind", "recap", "again", "redo"}
 LESSON_KEYWORDS = {"teach", "learn", "explain", "what is", "how do", "show me", "tell me"}
+GENERAL_KEYWORDS = {"how are you", "can we", "i want", "interest"}
 VISUAL_KEYWORDS = {"chart", "diagram", "picture", "show", "alphabet", "phonics chart"}
 READ_ALOUD_KEYWORDS = {"read aloud", "read out", "reading practice", "read this",
                        "i'll read", "let me read", "practice reading"}
@@ -310,7 +311,7 @@ def determine_intent(student_input: str) -> str:
     Returns:
         One of: "quiz", "review", "lesson", "visual", "answer", "greeting",
                 "read_aloud", "vocabulary", "write", "pronunciation",
-                "advance_grade", "hint".
+                "advance_grade", "hint", "general".
     """
     text = student_input.lower()
 
@@ -348,6 +349,11 @@ def determine_intent(student_input: str) -> str:
 
     if any(kw in text for kw in LESSON_KEYWORDS):
         return "lesson"
+
+    # General/conversational intent — checked after all educational intents
+    # so that "can we start a quiz?" still routes to "quiz", etc.
+    if any(kw in text for kw in GENERAL_KEYWORDS):
+        return "general"
 
     # If it's short (1-4 words), might be answering a quiz
     words = student_input.strip().split()
@@ -504,6 +510,13 @@ def process_student_input(
             "pending_quiz": None,
             "grade_advanced": False,
         }
+    elif intent == "general":
+        result = _handle_general_request(
+            student_input=student_input,
+            username=username,
+            subject=subject,
+            grade=grade,
+        )
     else:
         # Default: lesson/explanation — with confusion-aware strategy
         result = _handle_lesson_request(
@@ -602,6 +615,38 @@ def _handle_lesson_request(
             mistake_history,
             stats.get("difficulty_level", "Beginner"),
         ),
+    }
+
+
+def _handle_general_request(
+    student_input: str,
+    username: str,
+    subject: str,
+    grade: int,
+) -> dict:
+    """Respond conversationally to general or casual student inputs.
+
+    Does not force lesson continuation — responds like a friendly tutor.
+    """
+    prompt = (
+        f"You are a friendly and encouraging English tutor helping a Grade {grade} student "
+        f"named {username}. The student said: '{student_input}'. "
+        f"Respond in a warm, conversational way — like a supportive teacher chatting with a student. "
+        f"Do NOT continue a lesson or push new lesson content. "
+        f"Keep your response short, friendly, and age-appropriate."
+    )
+    try:
+        response_text = ai_teacher.call_llm(prompt)
+    except Exception:
+        response_text = (
+            f"That's a great question, {username}! 😊 "
+            f"I'm here to help you with {subject} whenever you're ready. What would you like to explore?"
+        )
+    return {
+        "message": response_text,
+        "intent": "general",
+        "visual_type": None,
+        "quiz_questions": None,
     }
 
 
