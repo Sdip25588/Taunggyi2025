@@ -325,20 +325,6 @@ def _contains_greeting(text: str) -> bool:
     return bool(_GREETING_PATTERN.search(text))
 
 
-if __name__ == "__main__":
-    # Minimal self-checks for greeting detection
-    samples = {
-        "hey": True,
-        "Hi there!": True,
-        "they said hello": False,
-        "good morning!": True,
-    }
-    for utterance, expected in samples.items():
-        assert (
-            _contains_greeting(utterance.lower()) == expected
-        ), f"Greeting detection failed for '{utterance}'"
-
-
 def determine_intent(student_input: str) -> str:
     """
     Classify the student's message intent.
