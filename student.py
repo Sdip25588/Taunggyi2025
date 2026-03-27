@@ -329,7 +329,7 @@ def update_student_field(username: str, field: str, value) -> None:
         "onboarding_done":      "UPDATE students SET onboarding_done = ? WHERE username = ?",
         "independence_score":   "UPDATE students SET independence_score = ? WHERE username = ?",
         "socratic_level":       "UPDATE students SET socratic_level = ? WHERE username = ?",
-        0c6d022e7134bec17a2c67def8a102d954001fc4
+        
     }
 
     if field not in _FIELD_QUERIES:
