@@ -20,6 +20,9 @@ class GreetingDetectionTests(unittest.TestCase):
     def test_substring_not_greeting(self):
         self.assertFalse(_contains_greeting("they are here"))
 
+    def test_empty_string(self):
+        self.assertFalse(_contains_greeting(""))
+
     def test_multi_word_greeting(self):
         self.assertTrue(_contains_greeting("good morning everyone"))
 

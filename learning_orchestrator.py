@@ -300,6 +300,7 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
+# Greeting detection terms (intent classification)
 GREETING_KEYWORDS = (
     "hey",
     "hi",
@@ -308,7 +309,7 @@ GREETING_KEYWORDS = (
     "good afternoon",
     "good evening",
 )
-# Note: pattern is built at import time; update both if greetings change.
+# Pattern derived from GREETING_KEYWORDS at import time.
 _GREETING_PATTERN = re.compile(
     rf"(?<!\w)(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})(?!\w)",
     flags=re.IGNORECASE,
