@@ -152,6 +152,32 @@ AZURE_SPEECH_REGION: str = _get_key("AZURE_SPEECH_REGION", _SECRETS)
 TTS_PROVIDER: str = _get_key("TTS_PROVIDER", _SECRETS, "edge")  # "edge" (default, free) or "azure"
 
 # ─────────────────────────────────────────────
+# Groq (first fallback provider)
+#
+# Override via env var or config_secrets.json:
+#   GROQ_API_KEY=gsk_...
+#   GROQ_MODEL=llama3-8b-8192   (default; other options: mixtral-8x7b-32768)
+#
+# Get a free key at https://console.groq.com/
+# ─────────────────────────────────────────────
+GROQ_API_KEY: str = _get_key("GROQ_API_KEY", _SECRETS)
+GROQ_MODEL: str = _get_key("GROQ_MODEL", _SECRETS, "llama3-8b-8192")
+
+# ─────────────────────────────────────────────
+# OpenRouter (second fallback provider)
+#
+# Override via env var or config_secrets.json:
+#   OPENROUTER_API_KEY=sk-or-...
+#   OPENROUTER_MODEL=mistralai/mistral-7b-instruct  (default)
+#
+# Browse free models at https://openrouter.ai/models
+# ─────────────────────────────────────────────
+OPENROUTER_API_KEY: str = _get_key("OPENROUTER_API_KEY", _SECRETS)
+OPENROUTER_MODEL: str = _get_key(
+    "OPENROUTER_MODEL", _SECRETS, "mistralai/mistral-7b-instruct"
+)
+
+# ─────────────────────────────────────────────
 # Gemini Model Selection
 #
 # Override this via environment variable or config_secrets.json:
@@ -167,8 +193,8 @@ GEMINI_MODEL: str = _get_key("GEMINI_MODEL", _SECRETS, "gemini-2.0-flash")
 
 # ─────────────────────────────────────────────
 # Model Routing Config
-# Structured for easy expansion to OpenAI / Claude later.
 # Each entry has: model_id, temperature defaults, max_tokens.
+# Add new providers here to extend the fallback chain.
 # ─────────────────────────────────────────────
 MODELS: dict = {
     "gemini": {
@@ -178,6 +204,22 @@ MODELS: dict = {
         "temperature_quiz": 0.3,       # Deterministic quiz generation
         "max_tokens": 2048,
         "api_key_env": "GEMINI_API_KEY",
+    },
+    "groq": {
+        "provider": "groq",
+        "model_id": GROQ_MODEL,
+        "temperature_explain": 0.7,
+        "temperature_quiz": 0.3,
+        "max_tokens": 2048,
+        "api_key_env": "GROQ_API_KEY",
+    },
+    "openrouter": {
+        "provider": "openrouter",
+        "model_id": OPENROUTER_MODEL,
+        "temperature_explain": 0.7,
+        "temperature_quiz": 0.3,
+        "max_tokens": 2048,
+        "api_key_env": "OPENROUTER_API_KEY",
     },
     # Placeholder entries for future expansion:
     "openai": {
