@@ -300,7 +300,30 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
-GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
+# Greeting detection terms (intent classification)
+GREETING_KEYWORDS = (
+    "hey",
+    "hi",
+    "hello",
+    "good morning",
+    "good afternoon",
+    "good evening",
+)
+# Pattern derived from GREETING_KEYWORDS at import time.
+_GREETING_PATTERN = re.compile(
+    rf"\b(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _contains_greeting(text: str) -> bool:
+    """
+    Return True if any greeting keyword appears as a standalone word/phrase.
+
+    Using word boundaries prevents short keywords like "hey" from matching inside
+    larger words such as "they".
+    """
+    return bool(_GREETING_PATTERN.search(text))
 
 
 def determine_intent(student_input: str) -> str:
@@ -333,7 +356,7 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
-    if any(kw in text for kw in GREETING_KEYWORDS):
+    if _contains_greeting(text):
         return "greeting"
 
     # Existing intents
