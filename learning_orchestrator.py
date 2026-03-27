@@ -310,7 +310,7 @@ GREETING_KEYWORDS = (
 )
 # Note: pattern is built at import time; update both if greetings change.
 _GREETING_PATTERN = re.compile(
-    rf"\b(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})\b",
+    rf"(?<!\w)(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})(?!\w)",
     flags=re.IGNORECASE,
 )
 
@@ -323,6 +323,20 @@ def _contains_greeting(text: str) -> bool:
     larger words such as "they".
     """
     return bool(_GREETING_PATTERN.search(text))
+
+
+if __name__ == "__main__":
+    # Minimal self-checks for greeting detection
+    samples = {
+        "hey": True,
+        "Hi there!": True,
+        "they said hello": False,
+        "good morning!": True,
+    }
+    for utterance, expected in samples.items():
+        assert (
+            _contains_greeting(utterance.lower()) == expected
+        ), f"Greeting detection failed for '{utterance}'"
 
 
 def determine_intent(student_input: str) -> str:
