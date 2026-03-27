@@ -308,8 +308,10 @@ GREETING_KEYWORDS = (
     "good afternoon",
     "good evening",
 )
+# Note: pattern is built at import time; update both if greetings change.
 _GREETING_PATTERN = re.compile(
-    rf"\b(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})\b"
+    rf"\b(?:{'|'.join(re.escape(kw) for kw in GREETING_KEYWORDS)})\b",
+    flags=re.IGNORECASE,
 )
 
 
