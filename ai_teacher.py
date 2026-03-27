@@ -11,6 +11,8 @@ Handles:
 import os
 import json
 import logging
+import time
+import requests
 from pathlib import Path
 from typing import Optional
 
@@ -161,7 +163,58 @@ def call_llm(
                 "- `gemini-1.5-flash`  ← previous default\n\n"
                 "After changing the model, restart the app with `streamlit run main.py`."
             )
-        return f"⚠️ AI response error: {exc}\n\nPlease check your API key and try again."
+        try:
+            logger.info("Switching to OpenRouter fallback...")
+            return call_openrouter(prompt)
+        
+        except Exception as openrounter_error:
+            logger.error("OpenRouter failed: %s", openrouter_error)
+
+        try:
+            logger.info("("Switching to Groq fallback...")
+            return call_groq(prompt)
+        
+        except Exception as groq_error:
+            logger.error("Groq failed: %s", groq_error)\
+
+        return"All AI providers failed. Please try again later."
+def call_openrouter(prompt: str) -> str:
+    try:
+        response = resquests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "mistralai/mistral-7b-instruct",
+                "message": [{"role": "user", "content": prompt}],
+            },
+        )
+        data =response.json()
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"OpenRouter failed:{e}"
+
+# Call the groq ai
+
+def call_groq(prompt: str) -> str:
+    try:
+        response = requests.post(
+            url="https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "llama3-8b-8192",
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        raise Exception(f"Groq error: {e}")
 
 
 # ─────────────────────────────────────────────
