@@ -4,22 +4,33 @@ ai_teacher.py — Core LLM and RAG pipeline.
 Handles:
   - Loading curriculum PDFs and building a FAISS vector index
   - Retrieving relevant chunks for a student query
-  - Calling Google Gemini 1.5 Flash with a grounded prompt
-  - Structured model routing dict for future expansion
+  - Calling the active LLM provider (Gemini → Groq → OpenRouter) with
+    automatic fallback and per-provider retry logic
+  - Structured model routing dict for easy future expansion
+
+Provider fallback order (configured in config.py):
+  1. Gemini (primary)   — Google Generative AI
+  2. Groq   (backup)    — fast open-source models (LLaMA 3 etc.)
+  3. OpenRouter (second backup) — wide model selection via unified API
+  4. Friendly error message — if all providers fail
 """
 
-import os
-import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
+import requests
 from google import genai
 from google.genai import types as genai_types
 
 from config import (
     GEMINI_API_KEY,
     GEMINI_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
     MODELS,
     ACTIVE_MODEL,
     PDF_PATHS,
@@ -40,6 +51,43 @@ _vectorstore = None
 
 RAG_AVAILABLE = False  # Set True after successful index load/build
 
+# ─────────────────────────────────────────────
+# Retry / fallback constants
+# ─────────────────────────────────────────────
+_MAX_RETRIES: int = 3          # attempts per provider before giving up on that provider
+_RETRY_DELAY: float = 1.0      # seconds to wait between retries (doubles each attempt)
+
+# Error substrings that signal a hard quota/rate-limit — no point retrying
+_RATE_LIMIT_SIGNALS: tuple = (
+    "429",
+    "RESOURCE_EXHAUSTED",
+    "rate_limit",
+    "rate limit",
+    "quota",
+    "Too Many Requests",
+)
+
+# Error substrings that signal the model/key is simply not available
+_NOT_FOUND_SIGNALS: tuple = (
+    "NOT_FOUND",
+    "not found",
+    "API_KEY_INVALID",
+    "API key not valid",
+    "model not found",
+)
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True if *exc* indicates a quota / rate-limit problem."""
+    msg = str(exc).lower()
+    return any(s.lower() in msg for s in _RATE_LIMIT_SIGNALS)
+
+
+def _is_not_found_error(exc: Exception) -> bool:
+    """Return True if *exc* indicates a model or key not-found problem."""
+    msg = str(exc)
+    return any(s.lower() in msg.lower() for s in _NOT_FOUND_SIGNALS)
+
 
 def _import_rag_dependencies():
     """Import LangChain/FAISS dependencies lazily."""
@@ -55,8 +103,189 @@ def _import_rag_dependencies():
         return False
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Provider-specific call functions
+# Each function accepts (prompt, temperature, max_tokens) and returns the
+# model's text response, or raises an exception on failure.
+# Retry logic is contained here so call_llm() stays clean.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def call_gemini(prompt: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
+    """
+    Call the Google Gemini API and return the response text.
+
+    Retries up to ``_MAX_RETRIES`` times on transient errors.
+    Raises immediately on rate-limit or quota errors (429 / RESOURCE_EXHAUSTED)
+    so the caller can fall back to the next provider without wasting time.
+
+    Args:
+        prompt:      Full prompt string to send to the model.
+        temperature: Sampling temperature (0.0–1.0).
+        max_tokens:  Maximum output tokens.
+
+    Returns:
+        The model's text response.
+
+    Raises:
+        Exception: On unrecoverable error after all retries are exhausted.
+    """
+    last_exc: Exception = RuntimeError("Gemini: no attempts made")
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
+                    safety_settings=[
+                        genai_types.SafetySetting(
+                            category=s["category"],
+                            threshold=s["threshold"],
+                        )
+                        for s in GEMINI_SAFETY_SETTINGS
+                    ],
+                ),
+            )
+            logger.info("Gemini responded successfully (attempt %d).", attempt)
+            return response.text
+
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "Gemini attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc
+            )
+            # Hard stop: rate-limit or not-found errors won't recover with retries
+            if _is_rate_limit_error(exc) or _is_not_found_error(exc):
+                logger.info(
+                    "Gemini: non-retryable error (%s). Skipping remaining retries.", exc
+                )
+                break
+            if attempt < _MAX_RETRIES:
+                time.sleep(_RETRY_DELAY * attempt)  # simple linear back-off
+
+    raise last_exc
+
+
+def call_groq(prompt: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
+    """
+    Call the Groq API and return the response text.
+
+    Uses the ``groq`` Python SDK with the model configured in ``GROQ_MODEL``
+    (default: ``llama3-8b-8192``).  Retries on transient errors; raises
+    immediately on rate-limit errors.
+
+    Args:
+        prompt:      Full prompt string.
+        temperature: Sampling temperature (0.0–1.0).
+        max_tokens:  Maximum output tokens.
+
+    Returns:
+        The model's text response.
+
+    Raises:
+        Exception: On unrecoverable error after all retries are exhausted.
+        ImportError: If the ``groq`` package is not installed.
+    """
+    import groq as groq_sdk  # lazy import — only needed when falling back
+
+    last_exc: Exception = RuntimeError("Groq: no attempts made")
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            client = groq_sdk.Groq(api_key=GROQ_API_KEY)
+            chat_completion = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            logger.info("Groq responded successfully (attempt %d).", attempt)
+            return chat_completion.choices[0].message.content
+
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "Groq attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc
+            )
+            if _is_rate_limit_error(exc) or _is_not_found_error(exc):
+                logger.info(
+                    "Groq: non-retryable error (%s). Skipping remaining retries.", exc
+                )
+                break
+            if attempt < _MAX_RETRIES:
+                time.sleep(_RETRY_DELAY * attempt)
+
+    raise last_exc
+
+
+def call_openrouter(
+    prompt: str, temperature: float = 0.7, max_tokens: int = 2048
+) -> str:
+    """
+    Call the OpenRouter API and return the response text.
+
+    OpenRouter exposes an OpenAI-compatible REST endpoint, so this function
+    calls it directly with the ``requests`` library — no extra SDK needed.
+    Uses the model configured in ``OPENROUTER_MODEL``
+    (default: ``mistralai/mistral-7b-instruct``).
+
+    Args:
+        prompt:      Full prompt string.
+        temperature: Sampling temperature (0.0–1.0).
+        max_tokens:  Maximum output tokens.
+
+    Returns:
+        The model's text response.
+
+    Raises:
+        Exception: On unrecoverable error after all retries are exhausted.
+    """
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        # Recommended by OpenRouter for rate-limit transparency
+        "HTTP-Referer": "https://github.com/Sdip25588/Taunggyi2025",
+        "X-Title": "Taunggyi English Tutor",
+    }
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    last_exc: Exception = RuntimeError("OpenRouter: no attempts made")
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            # Raise for 4xx/5xx HTTP errors so the except block can handle them
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+            logger.info("OpenRouter responded successfully (attempt %d).", attempt)
+            return text
+
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "OpenRouter attempt %d/%d failed: %s", attempt, _MAX_RETRIES, exc
+            )
+            if _is_rate_limit_error(exc) or _is_not_found_error(exc):
+                logger.info(
+                    "OpenRouter: non-retryable error (%s). Skipping remaining retries.",
+                    exc,
+                )
+                break
+            if attempt < _MAX_RETRIES:
+                time.sleep(_RETRY_DELAY * attempt)
+
+    raise last_exc
+
+
 # ─────────────────────────────────────────────
-# Gemini LLM setup
+# Gemini key validation helper
 # ─────────────────────────────────────────────
 
 def _configure_gemini() -> tuple[bool, str]:
@@ -70,98 +299,92 @@ def _configure_gemini() -> tuple[bool, str]:
     return validate_gemini_key(GEMINI_API_KEY)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Main LLM entry point — tries providers in order with automatic fallback
+# ─────────────────────────────────────────────────────────────────────────────
+
 def call_llm(
     prompt: str,
     mode: str = "explain",
     subject: str = "Phonics",
 ) -> str:
     """
-    Call the active LLM (Gemini 1.5 Flash) with the given prompt.
+    Call an LLM with automatic provider fallback.
+
+    Tries providers in this order:
+      1. Gemini   (primary)       — requires ``GEMINI_API_KEY``
+      2. Groq     (first backup)  — requires ``GROQ_API_KEY``
+      3. OpenRouter (second backup) — requires ``OPENROUTER_API_KEY``
+      4. Friendly error message   — if *all* providers fail
+
+    Each provider is given up to ``_MAX_RETRIES`` attempts on transient
+    errors.  Rate-limit / quota errors skip retries immediately and
+    move on to the next provider.
+
+    To add a new provider in the future:
+      1. Write a ``call_<provider>()`` function following the pattern above.
+      2. Add its key/model to ``config.py``.
+      3. Append it to the ``_providers`` list below.
 
     Args:
-        prompt: The full prompt including system instructions and context.
-        mode: "explain" (temperature 0.7) or "quiz" (temperature 0.3).
-        subject: Current subject (for safety filtering context).
+        prompt:  The full prompt (including system instructions and context).
+        mode:    ``"explain"`` (temperature 0.7) or ``"quiz"`` (temperature 0.3).
+        subject: Current subject — used only for logging / error messages.
 
     Returns:
-        The model's text response, or an error message string.
+        The model's text response, or a friendly fallback message string.
     """
-    ok, key_message = _configure_gemini()
-    if not ok:
-        return (
-            f"⚠️ **Gemini API key problem:** {key_message}\n\n"
-            "**Quick fix checklist:**\n"
-            "1. Make sure the variable is named exactly `GEMINI_API_KEY` (not `GEMINIAI_API_KEY` or any other spelling).\n"
-            "2. Check for accidental spaces or invisible characters around your key — copy it fresh from Google AI Studio.\n"
-            "3. Verify the key is active at https://aistudio.google.com/app/apikey\n"
-            "4. Add it to your `.env` file or `config_secrets.json` (see README → Configure API Keys)."
-        )
-
     model_config = MODELS[ACTIVE_MODEL]
     temperature = (
         model_config["temperature_quiz"]
         if mode == "quiz"
         else model_config["temperature_explain"]
     )
+    max_tokens = model_config["max_tokens"]
 
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model=model_config["model_id"],
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=model_config["max_tokens"],
-                safety_settings=[
-                    genai_types.SafetySetting(
-                        category=s["category"],
-                        threshold=s["threshold"],
-                    )
-                    for s in GEMINI_SAFETY_SETTINGS
-                ],
-            ),
-        )
-        return response.text
-    except Exception as exc:
-        logger.error("Gemini API error: %s", exc)
-        exc_str = str(exc)
-        if "API_KEY_INVALID" in exc_str or "API key not valid" in exc_str:
-            return (
-                f"⚠️ AI response error: {exc}\n\n"
-                "**Your Gemini API key was rejected.** Common causes:\n"
-                "1. The key has a typo or was truncated — copy it fresh from Google AI Studio.\n"
-                "2. The variable is named `GEMINIAI_API_KEY` instead of `GEMINI_API_KEY` (extra 'AI').\n"
-                "3. There are invisible spaces around the key — paste into a plain text editor first.\n"
-                "4. The key has been revoked or is restricted — check at https://aistudio.google.com/app/apikey\n"
-                "See the README → Troubleshooting for step-by-step instructions."
-            )
-        if ("NOT_FOUND" in exc_str or "not found" in exc_str.lower()) and "model" in exc_str.lower():
-            current_model = model_config["model_id"]
-            return (
-                f"⚠️ AI response error: Model `{current_model}` was not found or is not available "
-                f"for your API key.\n\n"
-                "**How to fix — choose a supported model:**\n\n"
-                "**Option A — Edit `config_secrets.json`** (easiest for beginners):\n"
-                "```json\n"
-                "{\n"
-                '  "GEMINI_API_KEY": "your_key_here",\n'
-                '  "GEMINI_MODEL": "gemini-2.0-flash"\n'
-                "}\n"
-                "```\n\n"
-                "**Option B — Set an environment variable:**\n"
-                "- Mac/Linux: `export GEMINI_MODEL=gemini-2.0-flash`\n"
-                "- Windows:   `set GEMINI_MODEL=gemini-2.0-flash`\n\n"
-                "**Option C — Edit `.env` file:**\n"
-                "```\n"
-                "GEMINI_MODEL=gemini-2.0-flash\n"
-                "```\n\n"
-                "**Supported models** (try these if you still get errors):\n"
-                "- `gemini-2.0-flash` ← recommended, fast & free\n"
-                "- `gemini-pro`        ← older, widely available\n"
-                "- `gemini-1.5-flash`  ← previous default\n\n"
-                "After changing the model, restart the app with `streamlit run main.py`."
-            )
-        return f"⚠️ AI response error: {exc}\n\nPlease check your API key and try again."
+    # ── ordered list of (name, callable, api_key) ──────────────────────────
+    _providers = [
+        ("Gemini",      call_gemini,      GEMINI_API_KEY),
+        ("Groq",        call_groq,        GROQ_API_KEY),
+        ("OpenRouter",  call_openrouter,  OPENROUTER_API_KEY),
+    ]
+
+    errors: list[str] = []  # collect per-provider error summaries for logging
+
+    for provider_name, provider_fn, api_key in _providers:
+        # Skip providers whose API key is not configured
+        if not api_key or api_key in ("your_gemini_api_key_here",
+                                       "your_groq_api_key_here",
+                                       "your_openrouter_api_key_here"):
+            logger.info("Skipping %s: API key not configured.", provider_name)
+            continue
+
+        try:
+            logger.info("Trying provider: %s (subject=%s, mode=%s).", provider_name, subject, mode)
+            return provider_fn(prompt, temperature, max_tokens)
+
+        except Exception as exc:
+            error_summary = f"{provider_name}: {exc}"
+            errors.append(error_summary)
+            logger.warning("Provider %s failed — moving to next. Error: %s", provider_name, exc)
+
+    # ── All providers exhausted ─────────────────────────────────────────────
+    logger.error(
+        "All LLM providers failed for subject=%s mode=%s. Errors: %s",
+        subject, mode, " | ".join(errors),
+    )
+    return (
+        "⚠️ **AI tutor is temporarily unavailable.**\n\n"
+        "All AI providers are currently unreachable (rate limits or configuration issues). "
+        "Please try again in a moment.\n\n"
+        "**Quick fixes:**\n"
+        "1. Check that at least one of `GEMINI_API_KEY`, `GROQ_API_KEY`, or "
+        "`OPENROUTER_API_KEY` is set correctly in your `.env` or `config_secrets.json`.\n"
+        "2. If you see a 429 error, you have hit a quota limit — wait a minute and retry, "
+        "or add a backup API key.\n"
+        "3. See README → Configure API Keys for step-by-step instructions."
+    )
+
 
 
 # ─────────────────────────────────────────────
