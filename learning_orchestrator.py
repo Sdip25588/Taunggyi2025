@@ -303,6 +303,16 @@ HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
 GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
 
 
+def _contains_keyword(text: str, keywords: set[str]) -> bool:
+    """
+    Return True if any keyword appears as a standalone word/phrase in the text.
+
+    Using word boundaries prevents short keywords like "hey" from matching inside
+    larger words such as "they".
+    """
+    return any(re.search(rf"(?<!\\w){re.escape(kw)}(?!\\w)", text) for kw in keywords)
+
+
 def determine_intent(student_input: str) -> str:
     """
     Classify the student's message intent.
@@ -333,7 +343,7 @@ def determine_intent(student_input: str) -> str:
     if any(kw in text for kw in HINT_KEYWORDS):
         return "hint"
 
-    if any(kw in text for kw in GREETING_KEYWORDS):
+    if _contains_keyword(text, GREETING_KEYWORDS):
         return "greeting"
 
     # Existing intents
