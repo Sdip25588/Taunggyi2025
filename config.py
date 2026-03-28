@@ -27,11 +27,6 @@ _logger = logging.getLogger(__name__)
 # Secrets-file fallback
 # ─────────────────────────────────────────────
 
-GEMINI_API_KEY: str = os.getenv("AIzaSyCJYm5EGqUx80i0-bRKzH5D185qhvR9Gtg", "")
-AZURE_SPEECH_KEY: str = os.getenv("AZURE_SPEECH_KEY", "")
-AZURE_SPEECH_REGION: str = os.getenv("AZURE_SPEECH_REGION", "")
-TTS_PROVIDER: str = os.getenv("TTS_PROVIDER", "edge")  # "edge" (default, free) or "azure"
-
 def _load_secrets_file() -> dict:
     """
     Load API keys from config_secrets.json in the project root.

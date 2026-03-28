@@ -87,7 +87,7 @@ LESSON_KEYWORDS: frozenset = frozenset({
 })
 
 GENERAL_KEYWORDS: frozenset = frozenset({
-    "how are you", "can we", "i want", "interest",
+    "how are you", "can we", "i want", "interest", "before",
 })
 
 

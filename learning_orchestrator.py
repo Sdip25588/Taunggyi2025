@@ -385,15 +385,13 @@ def _handle_general_request(
 
     Does not force lesson continuation — responds like a friendly tutor.
     """
-    prompt = (
-        f"You are a friendly and encouraging English tutor helping a Grade {grade} student "
-        f"named {username}. The student said: '{student_input}'. "
-        f"Respond in a warm, conversational way — like a supportive teacher chatting with a student. "
-        f"Do NOT continue a lesson or push new lesson content. "
-        f"Keep your response short, friendly, and age-appropriate."
-    )
     try:
-        response_text = ai_teacher.call_llm(prompt)
+        response_text = ai_teacher.generate_conversational_reply(
+            student_input=student_input,
+            username=username,
+            grade=grade,
+            subject=subject,
+        )
     except Exception:
         logger.exception("LLM error in _handle_general_request for user=%s", username)
         response_text = (

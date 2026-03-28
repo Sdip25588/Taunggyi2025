@@ -386,6 +386,38 @@ def call_llm(
     )
 
 
+def generate_conversational_reply(
+    student_input: str,
+    username: str = "Student",
+    grade: int = 1,
+    subject: str = "English",
+) -> str:
+    """
+    Generate a friendly, conversational reply to a non-lesson student message.
+
+    Builds a tutor-style prompt that instructs the LLM to respond warmly and
+    naturally—without pushing lesson content—then delegates to ``call_llm``
+    so the same provider-fallback logic applies.
+
+    Args:
+        student_input: The student's casual or conversational message.
+        username:      Student's name (for personalisation).
+        grade:         Grade level (1–5) for age-appropriate tone.
+        subject:       Current subject — included in the prompt so the LLM can
+                       gently reference it if the student asks what they're studying.
+
+    Returns:
+        A short, friendly response string.
+    """
+    prompt = (
+        f"You are a friendly and encouraging {subject} tutor helping a Grade {grade} student "
+        f"named {username}. The student said: '{student_input}'. "
+        f"Respond in a warm, conversational way — like a supportive teacher chatting with a "
+        f"student. Do NOT continue a lesson or push new lesson content. "
+        f"Keep your response short, friendly, and age-appropriate."
+    )
+    return call_llm(prompt, mode="explain", subject=subject)
+
 
 # ─────────────────────────────────────────────
 # RAG Pipeline
