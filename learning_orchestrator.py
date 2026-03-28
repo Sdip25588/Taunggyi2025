@@ -502,13 +502,13 @@ def process_student_input(
     elif intent == "greeting":
         result = {
             "intent": "greeting",
-            "response": (
+            "message": (
                 f"Hi {username}! 👋 It's great to hear from you. "
                 f"What would you like to learn in {subject} today?"
             ),
-            "visual": None,
-            "pending_quiz": None,
-            "grade_advanced": False,
+            "visual_type": None,
+            "quiz_questions": None,
+            "mistake_info": None,
         }
     elif intent == "general":
         result = _handle_general_request(
