@@ -386,6 +386,30 @@ def call_llm(
     )
 
 
+def generate_conversational_reply(student_input: str) -> str:
+    """
+    Generate a friendly, conversational reply for greetings or casual inputs.
+
+    Does not push lesson content — responds like a warm, supportive tutor.
+
+    Args:
+        student_input: The student's message (e.g. "hi", "how are you").
+
+    Returns:
+        A short, friendly response string.
+    """
+    prompt = (
+        "You are a warm and encouraging AI English tutor for young students. "
+        f"The student said: '{student_input}'. "
+        "Respond in a friendly, conversational way — like a supportive teacher "
+        "chatting with a student. Do NOT start a lesson or push any lesson content. "
+        "Keep your response short (1-2 sentences), friendly, and age-appropriate."
+    )
+    try:
+        return call_llm(prompt, mode="explain")
+    except Exception:
+        return "Hi there! 😊 Great to chat with you! How can I help you today?"
+
 
 # ─────────────────────────────────────────────
 # RAG Pipeline
