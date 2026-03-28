@@ -287,8 +287,8 @@ def _quick_answer(utterance: str, subject: str, grade: int, current_topic: str) 
 # ─────────────────────────────────────────────
 QUIZ_KEYWORDS = {"quiz", "test", "question", "practise", "practice", "try", "challenge"}
 REVIEW_KEYWORDS = {"review", "revise", "revision", "remind", "recap", "again", "redo"}
-LESSON_KEYWORDS = {"teach", "learn", "explain", "what is", "how do", "show me", "tell me"}
-GENERAL_KEYWORDS = {"how are you", "can we", "i want", "interest"}
+LESSON_KEYWORDS = {"teach", "learn", "explain", "what is", "how do", "show me"}
+GENERAL_KEYWORDS = {"can we", "i want", "interest", "tell me", "before"}
 VISUAL_KEYWORDS = {"chart", "diagram", "picture", "show", "alphabet", "phonics chart"}
 READ_ALOUD_KEYWORDS = {"read aloud", "read out", "reading practice", "read this",
                        "i'll read", "let me read", "practice reading"}
@@ -301,7 +301,8 @@ PRONUNCIATION_KEYWORDS = {"pronunciation", "how to say", "how do you say", "say 
 ADVANCE_GRADE_KEYWORDS = {"harder", "next grade", "grade 2", "grade 3", "grade 4", "grade 5",
                           "advance", "move up", "level up", "i'm ready for", "too easy"}
 HINT_KEYWORDS = {"hint", "clue", "help me", "i need a hint", "give me a hint"}
-GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening"}
+GREETING_KEYWORDS = {"hey", "hi", "hello", "good morning", "good afternoon", "good evening",
+                     "how are you"}
 
 
 def determine_intent(student_input: str) -> str:
@@ -502,21 +503,19 @@ def process_student_input(
     elif intent == "greeting":
         result = {
             "intent": "greeting",
-            "response": (
-                f"Hi {username}! 👋 It's great to hear from you. "
-                f"What would you like to learn in {subject} today?"
-            ),
-            "visual": None,
-            "pending_quiz": None,
-            "grade_advanced": False,
+            "message": ai_teacher.generate_conversational_reply(student_input),
+            "visual_type": None,
+            "quiz_questions": None,
+            "performance": {},
         }
     elif intent == "general":
-        result = _handle_general_request(
-            student_input=student_input,
-            username=username,
-            subject=subject,
-            grade=grade,
-        )
+        result = {
+            "intent": "general",
+            "message": ai_teacher.generate_conversational_reply(student_input),
+            "visual_type": None,
+            "quiz_questions": None,
+            "performance": {},
+        }
     else:
         # Default: lesson/explanation — with confusion-aware strategy
         result = _handle_lesson_request(
@@ -615,38 +614,6 @@ def _handle_lesson_request(
             mistake_history,
             stats.get("difficulty_level", "Beginner"),
         ),
-    }
-
-
-def _handle_general_request(
-    student_input: str,
-    username: str,
-    subject: str,
-    grade: int,
-) -> dict:
-    """Respond conversationally to general or casual student inputs.
-
-    Does not force lesson continuation — responds like a friendly tutor.
-    """
-    prompt = (
-        f"You are a friendly and encouraging English tutor helping a Grade {grade} student "
-        f"named {username}. The student said: '{student_input}'. "
-        f"Respond in a warm, conversational way — like a supportive teacher chatting with a student. "
-        f"Do NOT continue a lesson or push new lesson content. "
-        f"Keep your response short, friendly, and age-appropriate."
-    )
-    try:
-        response_text = ai_teacher.call_llm(prompt)
-    except Exception:
-        response_text = (
-            f"That's a great question, {username}! 😊 "
-            f"I'm here to help you with {subject} whenever you're ready. What would you like to explore?"
-        )
-    return {
-        "message": response_text,
-        "intent": "general",
-        "visual_type": None,
-        "quiz_questions": None,
     }
 
 
